@@ -1,0 +1,6 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+pandas>=2.2,<3
+numpy>=2.2,<3
+TA-Lib>=0.6,<1
+keyring>=25,<26
