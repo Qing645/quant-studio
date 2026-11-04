@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, time
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import numpy as np
@@ -123,6 +124,110 @@ def fetch_bars(symbol: str, timeframe: str) -> tuple[pd.DataFrame, dict[str, Any
         "delayNotice": "公开行情可能延迟，不保证交易级实时性",
     }
     return bars, metadata
+
+
+def fetch_daily_history(symbol: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Fetch adjusted daily bars, falling back to Yahoo when Eastmoney is unavailable."""
+    code = normalize_symbol(symbol)
+    market = _exchange_prefix(symbol)
+    secid = f"{'1' if market == 'sh' else '0'}.{code}"
+    url = (
+        "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+        f"?secid={secid}&fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6"
+        "&fields2=f51%2Cf52%2Cf53%2Cf54%2Cf55%2Cf56%2Cf57"
+        "&klt=101&fqt=1&beg=19900101&end=20500101&lmt=10000"
+    )
+    request = Request(url, headers={
+        "Referer": "https://quote.eastmoney.com/",
+        "User-Agent": "Mozilla/5.0",
+    })
+    try:
+        with urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        data = payload.get("data") or {}
+        rows = data.get("klines") or []
+        if not rows:
+            raise RuntimeError(f"{code} 的东方财富公开历史日线为空")
+        parsed_rows = [row.split(",")[:6] for row in rows if isinstance(row, str) and len(row.split(",")) >= 6]
+        bars = pd.DataFrame(parsed_rows, columns=("datetime", "open", "close", "high", "low", "volume"))
+        bars["datetime"] = pd.to_datetime(bars["datetime"], errors="coerce")
+        for name in ("open", "high", "low", "close", "volume"):
+            bars[name] = pd.to_numeric(bars[name], errors="coerce")
+        bars = (
+            bars.dropna(subset=["datetime", "open", "high", "low", "close", "volume"])
+            .loc[lambda frame: (frame[["open", "high", "low", "close"]] > 0).all(axis=1) & (frame["volume"] >= 0)]
+            .sort_values("datetime")
+            .drop_duplicates("datetime", keep="last")
+            .reset_index(drop=True)
+        )
+        if bars.empty:
+            raise RuntimeError(f"{code} 的东方财富有效历史日线为空")
+        return bars, _history_metadata(bars, market, "Eastmoney public adjusted daily history", "前复权")
+    except (HTTPError, URLError, TimeoutError, ConnectionError, json.JSONDecodeError, RuntimeError) as eastmoney_error:
+        try:
+            return _fetch_yahoo_daily_history(code, market)
+        except (HTTPError, URLError, TimeoutError, ConnectionError, json.JSONDecodeError, KeyError, TypeError, ValueError, RuntimeError) as yahoo_error:
+            raise RuntimeError(
+                f"历史行情获取失败：东方财富（{eastmoney_error}）；Yahoo Finance（{yahoo_error}）"
+            ) from yahoo_error
+
+
+def _fetch_yahoo_daily_history(code: str, market: str) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Fetch Yahoo chart data and apply its adjusted-close factor to OHLC prices."""
+    symbol = f"{code}.{market.upper()}"
+    period_end = int(datetime.now().timestamp()) + 86_400
+    url = (
+        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        f"?period1=0&period2={period_end}&interval=1d&events=div%2Csplits"
+    )
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    result = (payload.get("chart", {}).get("result") or [None])[0]
+    if not result:
+        raise RuntimeError(f"{symbol} 的 Yahoo 历史日线为空")
+    quote = result["indicators"]["quote"][0]
+    adjusted_close = result["indicators"].get("adjclose", [{}])[0].get("adjclose")
+    if not adjusted_close:
+        raise RuntimeError(f"{symbol} 的 Yahoo 响应缺少复权收盘价")
+    bars = pd.DataFrame({
+        "datetime": pd.to_datetime(result["timestamp"], unit="s", utc=True)
+        .tz_convert("Asia/Shanghai").tz_localize(None),
+        "open": quote["open"],
+        "high": quote["high"],
+        "low": quote["low"],
+        "close": quote["close"],
+        "adjustedClose": adjusted_close,
+        "volume": quote["volume"],
+    })
+    bars = bars.dropna(subset=["datetime", "open", "high", "low", "close", "adjustedClose", "volume"])
+    factor = bars["adjustedClose"] / bars["close"]
+    for name in ("open", "high", "low", "close"):
+        bars[name] = pd.to_numeric(bars[name], errors="coerce") * factor
+    bars["volume"] = pd.to_numeric(bars["volume"], errors="coerce")
+    bars = (
+        bars.drop(columns="adjustedClose")
+        .dropna(subset=["datetime", "open", "high", "low", "close", "volume"])
+        .loc[lambda frame: (frame[["open", "high", "low", "close"]] > 0).all(axis=1) & (frame["volume"] >= 0)]
+        .sort_values("datetime")
+        .drop_duplicates("datetime", keep="last")
+        .reset_index(drop=True)
+    )
+    if bars.empty:
+        raise RuntimeError(f"{symbol} 的 Yahoo 有效历史日线为空")
+    return bars, _history_metadata(bars, market, "Yahoo Finance public adjusted daily history", "adjclose OHLC factor")
+
+
+def _history_metadata(bars: pd.DataFrame, market: str, source: str, adjustment: str) -> dict[str, Any]:
+    """Build consistent source metadata for adjusted historical daily feeds."""
+    return {
+        "source": source,
+        "sourceTime": bars.iloc[-1]["datetime"].isoformat(sep=" "),
+        "exchange": market.upper(),
+        "adjustment": adjustment,
+        "barCount": len(bars),
+        "startTime": bars.iloc[0]["datetime"].isoformat(sep=" "),
+    }
 
 
 def normalize_symbol(symbol: str) -> str:
