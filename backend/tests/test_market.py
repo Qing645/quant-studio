@@ -394,6 +394,12 @@ class MarketAdapterTest(unittest.TestCase):
         short_history.assert_not_called()
         self.assertEqual(result["strategyType"], "swing_breakout")
         self.assertEqual(len(result["bars"]), len(bars))
+        self.assertEqual(result["benchmark"]["name"], "买入持有")
+        self.assertTrue(result["rollingPerformance"])
+        self.assertEqual(
+            [scenario["scenario"] for scenario in result["costSensitivity"]],
+            ["零成本", "双倍成本"],
+        )
 
     def test_intraday_backtest_rejects_daily_period(self) -> None:
         """Require the minute strategy to receive its own intraday sample type."""

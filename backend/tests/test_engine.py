@@ -3,7 +3,8 @@ import unittest
 import numpy as np
 import pandas as pd
 import talib
-from app.engine import _annualizer, _rolling_performance, analyze_strategy, run_backtest
+from unittest.mock import patch
+from app.engine import _annualizer, _rolling_performance, _strategy_signals, analyze_strategy, run_backtest
 
 
 class BacktestTimingTest(unittest.TestCase):
@@ -86,6 +87,121 @@ class BacktestTimingTest(unittest.TestCase):
         self.assertIsNone(result["sharpe"])
         self.assertIn("当日分钟样本", result["sampleWarning"])
         self.assertTrue(all(trade["exit"][:10] == trade["entry"][:10] for trade in result["trades"]))
+
+    def test_swing_breakout_reports_comparable_benchmark_rolling_and_cost_scenarios(self) -> None:
+        """Compare the daily swing rule with its tradable sample and cost assumptions."""
+        close = 10 + np.arange(420) * 0.02 + np.sin(np.arange(420) / 5) * 0.2
+        volume = np.full(len(close), 1000.0)
+        volume[80::40] = 2000.0
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
+            "open": close, "high": close + 0.15, "low": close - 0.15,
+            "close": close, "volume": volume,
+        })
+
+        result = run_backtest(bars, 100_000, 0.0003, 5, 10, 20, "swing_breakout")
+
+        self.assertEqual(result["benchmark"]["name"], "买入持有")
+        self.assertEqual(len(result["benchmark"]["equityCurve"]), len(bars))
+        self.assertTrue(result["rollingPerformance"])
+        self.assertEqual(
+            [scenario["scenario"] for scenario in result["costSensitivity"]],
+            ["零成本", "双倍成本"],
+        )
+
+    def test_swing_breakout_keeps_price_above_sma60_as_entry_filter(self) -> None:
+        """Retain the established SMA60 level filter without an unstable slope gate."""
+        current = 70
+        close = np.full(80, 10.0)
+        high = np.full(80, 10.5)
+        volume = np.full(80, 1000.0)
+        close[current] = 11.0
+        high[current] = 11.1
+        volume[current] = 1300.0
+        fast = np.full(80, 10.0)
+        slow = np.full(80, 10.0)
+        rising_sma = np.linspace(9.0, 10.0, 80)
+        falling_sma = rising_sma.copy()
+        falling_sma[current] = falling_sma[current - 5] - 0.01
+        atr = np.full(80, 0.2)
+
+        rising_entry, _ = _strategy_signals(
+            "swing_breakout", current + 1, close, fast, slow, falling_sma, {},
+            high=high, volume=volume, atr=atr, slow_period=20,
+        )
+
+        self.assertTrue(rising_entry)
+
+    def test_swing_breakout_confirms_fast_line_exit_for_two_closes(self) -> None:
+        """Avoid exiting on one noisy close while preserving the ATR risk exit."""
+        current = 70
+        close = np.full(80, 10.0)
+        high = np.full(80, 10.2)
+        volume = np.full(80, 1000.0)
+        fast = np.full(80, 10.0)
+        slow = np.full(80, 10.0)
+        rising_sma = np.linspace(9.0, 10.0, 80)
+        atr = np.full(80, 0.2)
+        close[current] = 9.8
+        fast[current] = 10.0
+
+        _, one_bar_exit = _strategy_signals(
+            "swing_breakout", current + 1, close, fast, slow, rising_sma, {},
+            high=high, volume=volume, atr=atr, slow_period=20,
+        )
+        close[current - 1] = 9.8
+        fast[current - 1] = 10.0
+        _, confirmed_exit = _strategy_signals(
+            "swing_breakout", current + 1, close, fast, slow, rising_sma, {},
+            high=high, volume=volume, atr=atr, slow_period=20,
+        )
+
+        self.assertFalse(one_bar_exit)
+        self.assertTrue(confirmed_exit)
+
+    def test_intraday_costs_are_charged_for_both_open_and_close(self) -> None:
+        """Charge round-trip costs to the bars where the trades actually execute."""
+        close = np.concatenate([
+            np.full(30, 10.0),
+            np.linspace(10, 10.3, 20),
+            np.linspace(10.3, 9.8, 20),
+        ])
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
+            "open": close, "high": close + 0.02, "low": close - 0.02,
+            "close": close, "volume": np.full(len(close), 1000.0),
+        })
+
+        result = run_backtest(bars, 100_000, 0.0003, 5, 3, 8, "intraday_scalp")
+        no_cost = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp")
+
+        self.assertFalse(result["openPosition"])
+        self.assertGreater(result["tradeCount"], 0)
+        self.assertLess(result["finalEquity"], no_cost["finalEquity"])
+
+    def test_intraday_exit_signal_waits_until_minimum_holding_period(self) -> None:
+        """Ignore indicator exits for three bars while retaining the forced close."""
+        close = np.linspace(10, 10.1, 8)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
+            "open": close, "high": close + 0.02, "low": close - 0.02,
+            "close": close, "volume": np.full(len(close), 1000.0),
+        })
+
+        def signals(_strategy, index, *_args, **_kwargs):
+            return (index == 2, index in {3, 4, 5})
+
+        with patch("app.engine._strategy_signals", side_effect=signals):
+            result = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp")
+
+        self.assertEqual(result["tradeCount"], 1)
+        self.assertEqual(result["trades"][0]["entry"], bars.iloc[2]["datetime"].isoformat())
+        self.assertEqual(result["trades"][0]["exit"], bars.iloc[5]["datetime"].isoformat())
+        self.assertEqual(result["benchmark"]["name"], "当日买入持有")
+        self.assertAlmostEqual(
+            result["benchmark"]["totalReturnPct"],
+            (close[-1] / close[0] - 1) * 100,
+        )
 
     def test_swing_breakout_live_signal_requires_daily_scope(self) -> None:
         """Keep the daily swing rule distinct from minute analysis."""

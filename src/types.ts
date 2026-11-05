@@ -143,6 +143,7 @@ export interface BacktestResult {
   }[];
   caveat: string;
   benchmark?: { name: string; totalReturnPct: number; maxDrawdownPct: number; equityCurve: { time: string; value: number }[] };
+  costSensitivity?: { scenario: string; totalReturnPct: number; maxDrawdownPct: number }[];
   positionSizingTargetVolatilityPct?: number;
   rebalanceCount?: number;
 }

@@ -124,13 +124,17 @@ def market(
         if timeframe in {"intraday", "1m"}:
             # Use continuous five-session minute history so SMA60 is ready at the open.
             analysis_bars, _ = fetch_bars(code, "five_day")
-            metadata["analysisBasis"] = "最近五个交易日分钟数据"
+            metadata["analysisBasis"] = (
+                "当日分钟K线"
+                if strategyType == "intraday_scalp"
+                else "最近五个交易日分钟数据"
+            )
         else:
             metadata["analysisBasis"] = {
                 "five_day": "最近五个交易日分钟数据",
                 "daily": "日K", "weekly": "周K", "monthly": "月K",
             }.get(timeframe, timeframe)
-        strategy_bars = analysis_bars
+        strategy_bars = bars if strategyType == "intraday_scalp" else analysis_bars
         strategy_bar_status = "completed"
         if (
             timeframe in {"daily", "weekly", "monthly"}

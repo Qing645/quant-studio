@@ -23,6 +23,12 @@ const emit = defineEmits<{ run: []; navigateStrategy: [] }>();
     <div class="results-toolbar"><div><h2>回测结果</h2><span>{{ result.tradeCount }} 笔已平仓 · {{ result.openPosition ? '期末持仓' : '期末空仓' }}</span></div><span class="data-range">数据截至 {{ sourceTime ?? "最近可用" }}</span></div>
     <div class="result-metrics"><div><span>累计收益</span><b :class="result.totalReturnPct >= 0 ? 'up' : 'down'">{{ result.totalReturnPct.toFixed(2) }}%</b></div><div><span>年化收益</span><b>{{ result.annualizedReturnPct === null ? '样本不足' : `${result.annualizedReturnPct.toFixed(2)}%` }}</b></div><div><span>最大回撤</span><b class="down">{{ result.maxDrawdownPct.toFixed(2) }}%</b></div><div><span>夏普比率</span><b>{{ result.sharpe === null ? '样本不足' : result.sharpe.toFixed(2) }}</b></div><div><span>持仓暴露</span><b>{{ result.exposurePct.toFixed(1) }}%</b></div><div><span>胜率</span><b>{{ result.winRatePct.toFixed(1) }}%</b></div></div>
     <div v-if="result.benchmark" class="benchmark-strip"><span>{{ result.benchmark.name }}</span><b :class="result.benchmark.totalReturnPct >= 0 ? 'up' : 'down'">{{ result.benchmark.totalReturnPct.toFixed(2) }}%</b><span>最大回撤</span><b class="down">{{ result.benchmark.maxDrawdownPct.toFixed(2) }}%</b><span v-if="result.positionSizingTargetVolatilityPct">仓位估算目标</span><b v-if="result.positionSizingTargetVolatilityPct">{{ result.positionSizingTargetVolatilityPct.toFixed(0) }}%</b></div>
+    <section v-if="result.costSensitivity?.length" class="rolling-section">
+      <div class="section-head"><div><h2>交易成本敏感性</h2><span>保持信号规则不变，仅调整手续费和滑点</span></div></div>
+      <div class="table-wrap"><table><thead><tr><th>成本假设</th><th>累计收益</th><th class="align-right">最大回撤</th></tr></thead><tbody>
+        <tr v-for="scenario in result.costSensitivity" :key="scenario.scenario"><td>{{ scenario.scenario }}</td><td :class="scenario.totalReturnPct >= 0 ? 'up' : 'down'">{{ scenario.totalReturnPct.toFixed(2) }}%</td><td class="align-right down">{{ scenario.maxDrawdownPct.toFixed(2) }}%</td></tr>
+      </tbody></table></div>
+    </section>
     <section v-if="result.rollingPerformance?.length" class="rolling-section">
       <div class="section-head"><div><h2>滚动样本外表现</h2><span>共同样本外区间等分为四段 · 等权买入持有作为基准</span></div></div>
       <div class="table-wrap"><table><thead><tr><th>区间</th><th>策略收益</th><th>持有收益</th><th>最大回撤</th><th>持仓暴露</th><th class="align-right">交易成本</th></tr></thead><tbody>

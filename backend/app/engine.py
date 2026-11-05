@@ -40,6 +40,8 @@ def run_backtest(
     fast_period: int,
     slow_period: int,
     strategy_type: str = "trend_filter",
+    *,
+    _include_cost_sensitivity: bool = True,
 ) -> dict[str, Any]:
     """Simulate next-bar execution and return portfolio and trade statistics."""
     if fast_period < 2 or slow_period <= fast_period or slow_period > 250:
@@ -67,11 +69,14 @@ def run_backtest(
     entry_time = ""
     entry_price = 0.0
     entry_cost = 0.0
+    entry_index = -1
+    highest_close_since_entry = 0.0
     realized_proceeds = 0.0
     equity = []
     trades = []
     exposure_curve = []
-    transaction_cost_curve = []
+    benchmark_equity = []
+    transaction_cost_curve = np.zeros(len(bars), dtype=float)
     rebalance_count = 0
     cost_rate = fee_rate + slippage_bps / 10_000
     template = get_strategy_template(strategy_type)
@@ -89,7 +94,16 @@ def run_backtest(
                 ema_fast=ema_fast, ema_slow=ema_slow, atr=atr, vwap=vwap,
                 fast_period=fast_period, slow_period=slow_period,
             )
+            if strategy_type == "intraday_scalp" and shares > 0:
+                signal_index = index - 1
+                highest_close_since_entry = max(highest_close_since_entry, close[signal_index])
+                atr_stop = (
+                    close[signal_index] <= highest_close_since_entry - 1.5 * atr[signal_index]
+                    if np.isfinite(atr[signal_index]) else False
+                )
+                crossed_down = crossed_down or atr_stop
             force_intraday_close = strategy_type == "intraday_scalp" and index == len(bars) - 1 and shares > 0
+            minimum_hold_elapsed = strategy_type != "intraday_scalp" or index - entry_index >= 3
             execution_price = open_price[index] * (1 + cost_rate)
             if shares == 0 and crossed_up and not (strategy_type == "intraday_scalp" and index == len(bars) - 1):
                 if strategy_type == "trend_filter":
@@ -101,11 +115,13 @@ def run_backtest(
                     entry_value = cash
                 shares = entry_value / execution_price
                 entry_time = bars.iloc[index]["datetime"].isoformat()
+                entry_index = index
+                highest_close_since_entry = close[index - 1]
                 entry_price = float(execution_price)
                 entry_cost = float(shares * open_price[index] * cost_rate)
-                transaction_cost_curve.append(entry_cost)
+                transaction_cost_curve[index] += entry_cost
                 cash -= entry_value
-            elif shares > 0 and (crossed_down or force_intraday_close):
+            elif shares > 0 and (force_intraday_close or (crossed_down and minimum_hold_elapsed)):
                 raw_exit_price = close[index] if force_intraday_close else open_price[index]
                 exit_price = raw_exit_price * (1 - cost_rate)
                 proceeds = realized_proceeds + shares * exit_price
@@ -120,12 +136,14 @@ def run_backtest(
                     "pnl": float(total_pnl),
                     "transactionCost": float(entry_cost + exit_cost),
                 })
-                transaction_cost_curve.append(exit_cost)
+                transaction_cost_curve[index] += exit_cost
                 cash += shares * exit_price
                 shares = 0.0
                 entry_value = 0.0
                 entry_price = 0.0
                 entry_cost = 0.0
+                entry_index = -1
+                highest_close_since_entry = 0.0
                 realized_proceeds = 0.0
             elif (
                 strategy_type == "trend_filter"
@@ -146,7 +164,7 @@ def run_backtest(
                         entry_value += delta_value
                         adjustment_cost = float(buy_shares * open_price[index] * cost_rate)
                         entry_cost += adjustment_cost
-                        transaction_cost_curve.append(adjustment_cost)
+                        transaction_cost_curve[index] += adjustment_cost
                         rebalance_count += 1
                     elif delta_value < -1e-8:
                         sell_shares = min(shares, -delta_value / open_price[index])
@@ -157,16 +175,16 @@ def run_backtest(
                         shares -= sell_shares
                         realized_proceeds += sell_proceeds
                         entry_cost += adjustment_cost
-                        transaction_cost_curve.append(adjustment_cost)
+                        transaction_cost_curve[index] += adjustment_cost
                         rebalance_count += 1
         equity_value = cash + shares * close[index]
         equity.append({"time": bars.iloc[index]["datetime"].isoformat(), "value": float(equity_value)})
+        if strategy_type == "intraday_scalp":
+            benchmark_equity.append(initial_capital * close[index] / close[0])
         exposure_curve.append(
             float(shares * close[index] / equity_value)
             if strategy_type == "trend_filter" and equity_value else float(shares > 0)
         )
-        if len(transaction_cost_curve) < index + 1:
-            transaction_cost_curve.append(0.0)
 
     final_equity = equity[-1]["value"]
     curve = np.array([point["value"] for point in equity], dtype=float)
@@ -175,7 +193,13 @@ def run_backtest(
     returns = np.diff(curve) / curve[:-1] if len(curve) > 1 else np.array([])
     interval_minutes = bars["datetime"].diff().dt.total_seconds().median() / 60
     annualizer = _annualizer(interval_minutes)
-    comparison_start = min(len(bars) - 1, max(slow_period, 20) + 1) if strategy_type == "trend_filter" else 0
+    comparison_start = (
+        min(len(bars) - 1, max(slow_period, 20) + 1)
+        if strategy_type == "trend_filter"
+        else min(len(bars) - 1, max(slow_period, 60) + 1)
+        if strategy_type == "swing_breakout"
+        else 0
+    )
     # Equity includes the initial cash balance during warmup, so annualize over
     # the full first-to-last return interval rather than only eligible bars.
     annualized = 0.0 if strategy_type == "intraday_scalp" else (final_equity / initial_capital) ** (annualizer / max(len(bars) - 1, 1)) - 1
@@ -209,7 +233,18 @@ def run_backtest(
     }
     if strategy_type == "intraday_scalp":
         result["sampleWarning"] = "仅回测当前可获取的当日分钟样本；该结果不能代表长期策略表现。"
-    if strategy_type == "trend_filter":
+        benchmark = np.asarray(benchmark_equity, dtype=float)
+        benchmark_drawdown = benchmark / np.maximum.accumulate(benchmark) - 1
+        result["benchmark"] = {
+            "name": "当日买入持有",
+            "totalReturnPct": float((benchmark[-1] / initial_capital - 1) * 100),
+            "maxDrawdownPct": float(benchmark_drawdown.min() * 100),
+            "equityCurve": [
+                {"time": point["time"], "value": float(value)}
+                for point, value in zip(equity, benchmark)
+            ],
+        }
+    if strategy_type in {"trend_filter", "swing_breakout"}:
         benchmark_curve = np.full(len(close), initial_capital, dtype=float)
         benchmark_curve[comparison_start:] = initial_capital * close[comparison_start:] / close[comparison_start]
         benchmark_drawdown = benchmark_curve / np.maximum.accumulate(benchmark_curve) - 1
@@ -222,6 +257,39 @@ def run_backtest(
                 for point, value in zip(equity, benchmark_curve)
             ],
         }
+        dates = [point["time"] for point in equity]
+        result["rollingPerformance"] = _rolling_performance(
+            dates,
+            curve,
+            benchmark_curve,
+            np.asarray(exposure_curve, dtype=float) * 100,
+            transaction_cost_curve,
+            dates[comparison_start],
+            dates[-1],
+        )
+    if strategy_type == "swing_breakout" and _include_cost_sensitivity:
+        sensitivity = []
+        for label, scenario_fee, scenario_slippage in (
+            ("零成本", 0.0, 0.0),
+            ("双倍成本", min(fee_rate * 2, 0.02), min(slippage_bps * 2, 500)),
+        ):
+            scenario = run_backtest(
+                bars,
+                initial_capital,
+                scenario_fee,
+                scenario_slippage,
+                fast_period,
+                slow_period,
+                strategy_type,
+                _include_cost_sensitivity=False,
+            )
+            sensitivity.append({
+                "scenario": label,
+                "totalReturnPct": scenario["totalReturnPct"],
+                "maxDrawdownPct": scenario["maxDrawdownPct"],
+            })
+        result["costSensitivity"] = sensitivity
+    if strategy_type == "trend_filter":
         result["positionSizingTargetVolatilityPct"] = 20.0
         result["rebalanceCount"] = rebalance_count
     return result
@@ -281,12 +349,23 @@ def analyze_strategy(
         ema_fast = talib.EMA(close, timeperiod=fast_period)
         ema_slow = talib.EMA(close, timeperiod=slow_period)
         vwap = _session_vwap(bars)
-        if latest < 1 or not np.isfinite([ema_fast[latest], ema_slow[latest], ema_fast[latest - 1], ema_slow[latest - 1], vwap[latest]]).all():
+        if latest < 1 or not np.isfinite([
+            ema_fast[latest], ema_slow[latest], ema_fast[latest - 1], ema_slow[latest - 1],
+            vwap[latest], vwap[latest - 1], close[latest], close[latest - 1],
+        ]).all():
             result.update({"signal": "数据不足", "message": "当前分钟样本不足以计算所选均线和VWAP。"})
             return result
-        entry = bool(ema_fast[latest] > ema_slow[latest] and ema_fast[latest - 1] <= ema_slow[latest - 1] and close[latest] > vwap[latest])
-        exit_ = bool(ema_fast[latest] < ema_slow[latest] or close[latest] < vwap[latest])
-        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "日内入场条件触发" if entry else "日内退出条件触发" if exit_ else "等待分钟信号", "message": f"EMA{fast_period} {ema_fast[latest]:.4f} / EMA{slow_period} {ema_slow[latest]:.4f}；VWAP {vwap[latest]:.4f}。只做日内，不持仓过夜。"})
+        entry = bool(
+            ema_fast[latest] > ema_slow[latest]
+            and ema_fast[latest] > ema_fast[latest - 1]
+            and close[latest] > vwap[latest]
+            and close[latest - 1] > vwap[latest - 1]
+        )
+        exit_ = bool(
+            (close[latest] < vwap[latest] and close[latest - 1] < vwap[latest - 1])
+            or (ema_fast[latest] < ema_slow[latest] and ema_fast[latest - 1] < ema_slow[latest - 1])
+        )
+        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "日内入场条件触发" if entry else "日内退出条件触发" if exit_ else "等待分钟信号", "message": f"EMA{fast_period} {ema_fast[latest]:.4f} / EMA{slow_period} {ema_slow[latest]:.4f}；VWAP {vwap[latest]:.4f}。入场要求连续两根站在VWAP上方；持仓至少3根分钟K，只做日内不隔夜。"})
         return result
 
     fast = talib.SMA(close, timeperiod=fast_period)
@@ -299,10 +378,12 @@ def analyze_strategy(
             high=high, volume=bars["volume"].to_numpy(dtype=np.float64), atr=atr,
             fast_period=fast_period, slow_period=slow_period,
         )
-        if not np.isfinite([fast[latest], regime_sma[latest], atr[latest]]).all():
+        if latest < 1 or not np.isfinite([
+            fast[latest], fast[latest - 1], regime_sma[latest], atr[latest],
+        ]).all():
             result.update({"signal": "数据不足", "message": "当前样本不足以计算日K波段条件。"})
             return result
-        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "波段入场条件触发" if entry else "波段风险退出触发" if exit_ else "等待日K突破", "message": f"收盘 {close[latest]:.3f}；SMA60 {regime_sma[latest]:.3f}；ATR20 {atr[latest]:.3f}。信号在下一根日K开盘执行。"})
+        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "波段入场条件触发" if entry else "波段风险退出触发" if exit_ else "等待日K突破", "message": f"收盘 {close[latest]:.3f}；SMA60 {regime_sma[latest]:.3f}；ATR20 {atr[latest]:.3f}。离场需连续两根收盘低于快线或触发 ATR 跟踪风险线。信号下一根日K开盘执行。"})
         return result
 
     if strategy_type == "trend_filter":
@@ -415,21 +496,38 @@ def _strategy_signals(
     current = index - 1
     previous = current - 1
     if strategy_type == "swing_breakout":
-        if current < max(slow_period, 60) or high is None or volume is None or atr is None:
+        if current < max(slow_period, 60, 1) or high is None or volume is None or atr is None:
             return False, False
         prior_high = np.max(high[current - slow_period:current])
         volume_base = np.mean(volume[current - 20:current]) if current >= 20 else np.nan
-        entry = bool(close[current] > prior_high and close[current] > regime_sma[current] and volume[current] > volume_base * 1.2)
-        exit_ = bool(close[current] < fast[current] or close[current] < np.max(close[max(0, current - 20):current + 1]) - 2 * atr[current])
+        entry = bool(
+            close[current] > prior_high
+            and close[current] > regime_sma[current]
+            and volume[current] > volume_base * 1.2
+        )
+        fast_line_exit = close[current] < fast[current] and close[previous] < fast[previous]
+        trailing_atr_exit = close[current] < np.max(close[max(0, current - 20):current + 1]) - 2 * atr[current]
+        exit_ = bool(fast_line_exit or trailing_atr_exit)
         return entry, exit_
     if strategy_type == "intraday_scalp":
         if ema_fast is None or ema_slow is None or vwap is None or current < 1:
             return False, False
-        values = [ema_fast[current], ema_slow[current], ema_fast[previous], ema_slow[previous], vwap[current], close[current]]
+        values = [
+            ema_fast[current], ema_slow[current], ema_fast[previous], ema_slow[previous],
+            vwap[current], vwap[previous], close[current], close[previous],
+        ]
         if not np.isfinite(values).all():
             return False, False
-        entry = ema_fast[current] > ema_slow[current] and ema_fast[previous] <= ema_slow[previous] and close[current] > vwap[current]
-        exit_ = ema_fast[current] < ema_slow[current] or close[current] < vwap[current]
+        entry = (
+            ema_fast[current] > ema_slow[current]
+            and ema_fast[current] > ema_fast[previous]
+            and close[current] > vwap[current]
+            and close[previous] > vwap[previous]
+        )
+        exit_ = (
+            (close[current] < vwap[current] and close[previous] < vwap[previous])
+            or (ema_fast[current] < ema_slow[current] and ema_fast[previous] < ema_slow[previous])
+        )
         return bool(entry), bool(exit_)
     if strategy_type == "trend_filter":
         if previous < 0 or not np.isfinite([
