@@ -120,6 +120,11 @@ def fetch_bars(symbol: str, timeframe: str) -> tuple[pd.DataFrame, dict[str, Any
         "exchange": market_code[:2].upper(),
         "sampled": sampled,
         "marketOpen": market_open,
+        "sessionComplete": (
+            timeframe in {"intraday", "1m"}
+            and last_bar_time.time() >= time(15, 0)
+            and (last_bar_time.date() < received_at.date() or received_at.time() >= time(15, 0))
+        ),
         "sessionStatus": "交易时段" if market_open else "非交易时段 · 显示最近有效行情",
         "delayNotice": "公开行情可能延迟，不保证交易级实时性",
     }

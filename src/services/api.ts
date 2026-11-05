@@ -5,6 +5,11 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
   const payload = await response.json();
-  if (!response.ok) throw new Error(payload.detail ?? `请求失败 (${response.status})`);
+  if (!response.ok) {
+    const detail = Array.isArray(payload.detail)
+      ? payload.detail.map((issue: { msg: string }) => issue.msg).join("；")
+      : payload.detail;
+    throw new Error(detail ?? `请求失败 (${response.status})`);
+  }
   return payload as T;
 }

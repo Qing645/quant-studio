@@ -12,14 +12,18 @@ import {
 import AIView from "./components/AIView.vue";
 import BacktestView from "./components/BacktestView.vue";
 import MarketView from "./components/MarketView.vue";
+import SignalCenter from "./components/SignalCenter.vue";
 import StrategyView from "./components/StrategyView.vue";
 import { api } from "./services/api";
+import { copyStrategy, createCustomStrategy, marketStrategyQuery, strategyExecution, strategyPresentation, strategyValidationError } from "./services/strategy";
 import type {
   AISettings,
   BacktestResult,
   MarketSnapshot,
   Strategy,
+  SignalHistoryRecord,
   StrategyTemplate,
+  RuleOptions,
   Timeframe,
   TimeframeOption,
   View
@@ -43,24 +47,19 @@ const navItems = [
 ];
 
 const snapshot = ref<MarketSnapshot | null>(null);
+const signalHistory = ref<SignalHistoryRecord[]>(readSignalHistory());
+const signalHistoryOpen = ref(false);
+const activeSignalToast = ref<SignalHistoryRecord | null>(null);
 const strategies = ref<Strategy[]>([]);
 const strategyTemplates = ref<StrategyTemplate[]>([]);
+const ruleOptions = ref<RuleOptions | null>(null);
 const strategiesLoading = ref(false);
 const strategySaving = ref(false);
 const loading = ref(false);
 const apiReady = ref(false);
 const marketStale = ref(false);
 const error = ref("");
-const activeStrategy = reactive<Strategy>({
-  id: "",
-  name: "",
-  strategyType: "trend_filter",
-  fastPeriod: 20,
-  slowPeriod: 60,
-  description: "",
-  version: 0,
-  updatedAt: ""
-});
+const activeStrategy = ref<Strategy>({ ...createCustomStrategy("159977", "daily"), name: "" });
 const backtestForm = reactive({
   initialCapital: 100000,
   feeRate: 0.0003,
@@ -84,6 +83,14 @@ let liveAIRequestId = 0;
 let refreshTimer: number | undefined;
 let refreshQueued = false;
 let marketRequestId = 0;
+let observedSignalContext = "";
+let observedSignalFingerprint = "";
+let signalToastTimer: number | undefined;
+
+const signalContext = computed(() => JSON.stringify([
+  symbol.value.trim().toUpperCase().replace(/\.(SZSE|SSE|SZ|SH)$/, ""),
+  timeframe.value, activeStrategy.value.id, strategyExecution(activeStrategy.value)
+]));
 
 const pageTitle = computed(
   () =>
@@ -96,23 +103,23 @@ const timeframeLabel = computed(
 );
 const activeTemplate = computed(() =>
   strategyTemplates.value.find(
-    (item) => item.strategyType === activeStrategy.strategyType
+    (item) => item.strategyType === activeStrategy.value.strategyType
   )
 );
-const strategyTypeLabel = computed(() => activeTemplate.value?.label ?? "");
+const activePresentation = computed(() => strategyPresentation(activeStrategy.value, activeTemplate.value, ruleOptions.value));
+const strategyTypeLabel = computed(() => activePresentation.value?.label ?? "");
 const backtestRequest = computed(() => ({
-  symbol: symbol.value,
-  timeframe: activeStrategy.strategyType === "intraday_scalp" ? "intraday" : activeStrategy.strategyType === "swing_breakout" ? "daily" : timeframe.value,
-  strategyType: activeStrategy.strategyType,
-  ...backtestForm,
-  fastPeriod: activeStrategy.fastPeriod,
-  slowPeriod: activeStrategy.slowPeriod
+  symbol: activeStrategy.value.strategyType === "custom" ? activeStrategy.value.rules.symbol : symbol.value,
+  timeframe: activeStrategy.value.strategyType === "custom" ? activeStrategy.value.rules.timeframe
+    : activeStrategy.value.strategyType === "intraday_scalp" ? "intraday" : "daily",
+  ...strategyExecution(activeStrategy.value), ...backtestForm
 }));
+const backtestTimeframeLabel = computed(() => timeframeOptions.find((item) => item.value === backtestRequest.value.timeframe)?.label ?? "");
 const backtestContext = computed(() => JSON.stringify(backtestRequest.value));
 const strategyChanged = computed(() => {
-  const saved = strategies.value.find((item) => item.id === activeStrategy.id);
+  const saved = strategies.value.find((item) => item.id === activeStrategy.value.id);
   return (
-    !saved || strategyDefinition(saved) !== strategyDefinition(activeStrategy)
+    !saved || strategyDefinition(saved) !== strategyDefinition(activeStrategy.value)
   );
 });
 const dayChangePct = computed(
@@ -128,11 +135,7 @@ const freshness = computed(() =>
   snapshot.value?.metadata.sampled ? "分钟级公开行情" : "复权K线"
 );
 const liveAIContext = computed(() => JSON.stringify([
-  symbol.value.trim().toUpperCase(),
-  timeframe.value,
-  activeStrategy.strategyType,
-  activeStrategy.fastPeriod,
-  activeStrategy.slowPeriod
+  symbol.value.trim().toUpperCase(), timeframe.value, strategyExecution(activeStrategy.value)
 ]));
 const liveAIStale = computed(() => Boolean(
   liveAIResult.value &&
@@ -142,6 +145,11 @@ const liveAIStale = computed(() => Boolean(
 
 /** Load the selected symbol and queue one refresh if a request is already running. */
 async function loadMarket(): Promise<void> {
+  const validationError = strategyValidationError(activeStrategy.value, activeTemplate.value, ruleOptions.value);
+  if (validationError) {
+    if (activeView.value === "market" && activeStrategy.value.name) error.value = `当前策略尚未就绪：${validationError}`;
+    return;
+  }
   if (loading.value) {
     refreshQueued = true;
     return;
@@ -150,15 +158,13 @@ async function loadMarket(): Promise<void> {
   const requestId = ++marketRequestId;
   const requestedTimeframe = timeframe.value;
   error.value = "";
-  const strategyQuery = new URLSearchParams({
-    strategyType: activeStrategy.strategyType,
-    fastPeriod: String(activeStrategy.fastPeriod),
-    slowPeriod: String(activeStrategy.slowPeriod)
-  });
+  const strategyQuery = marketStrategyQuery(activeStrategy.value);
   const requestedSymbol = symbol.value
     .trim()
     .toUpperCase()
     .replace(/\.(SZSE|SSE|SZ|SH)$/, "");
+  const requestedSignalContext = signalContext.value;
+  const requestedStrategy = copyStrategy(activeStrategy.value);
   if (snapshot.value && snapshot.value.symbol !== requestedSymbol) {
     snapshot.value = null;
     aiResult.value = "";
@@ -168,7 +174,12 @@ async function loadMarket(): Promise<void> {
     const result = await api<MarketSnapshot>(
       `/api/market?symbol=${encodeURIComponent(symbol.value)}&timeframe=${requestedTimeframe}&${strategyQuery}`
     );
-    if (requestId === marketRequestId && requestedTimeframe === timeframe.value) {
+    if (
+      requestId === marketRequestId &&
+      requestedTimeframe === timeframe.value &&
+      requestedSignalContext === signalContext.value
+    ) {
+      recordSignalTransition(result, requestedSignalContext, requestedStrategy);
       snapshot.value = result;
       marketStale.value = false;
       apiReady.value = true;
@@ -186,6 +197,80 @@ async function loadMarket(): Promise<void> {
       void loadMarket();
     }
   }
+}
+
+/** Load persisted signal events without failing when browser storage is unavailable. */
+function readSignalHistory(): SignalHistoryRecord[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem("quant-studio.signal-history.v1") ?? "[]");
+    return Array.isArray(value) ? value as SignalHistoryRecord[] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Store the latest signal history for access after the workspace is reopened. */
+function persistSignalHistory(records: SignalHistoryRecord[]): void {
+  try {
+    localStorage.setItem("quant-studio.signal-history.v1", JSON.stringify(records));
+  } catch {
+    /* Keep this session's records available even if browser storage is full. */
+  }
+}
+
+/** Record only signal-state transitions within the same symbol, timeframe and strategy. */
+function recordSignalTransition(
+  result: MarketSnapshot,
+  context: string,
+  strategy: Strategy
+): void {
+  const current = result.strategy;
+  if (!current.supported || !current.signal || current.signal === "数据不足") {
+    observedSignalContext = context;
+    observedSignalFingerprint = "";
+    return;
+  }
+
+  const fingerprint = JSON.stringify([
+    current.signal,
+    current.entryCondition ?? false,
+    current.exitCondition ?? false,
+    current.action ?? "",
+    current.regime ?? ""
+  ]);
+  if (context !== observedSignalContext || !observedSignalFingerprint) {
+    observedSignalContext = context;
+    observedSignalFingerprint = fingerprint;
+    return;
+  }
+  if (fingerprint === observedSignalFingerprint) return;
+  observedSignalFingerprint = fingerprint;
+
+  const record: SignalHistoryRecord = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    symbol: result.symbol,
+    strategyName: strategy.name || strategy.strategyType,
+    strategyType: strategy.strategyType,
+    timeframeLabel: timeframeOptions.find((item) => item.value === result.timeframe)?.label ?? result.timeframe,
+    signal: current.signal,
+    message: current.message,
+    sourceTime: result.metadata.sourceTime,
+    capturedAt: new Date().toISOString()
+  };
+  signalHistory.value = [record, ...signalHistory.value];
+  persistSignalHistory(signalHistory.value);
+  activeSignalToast.value = record;
+  if (signalToastTimer) window.clearTimeout(signalToastTimer);
+  signalToastTimer = window.setTimeout(() => {
+    activeSignalToast.value = null;
+  }, 8000);
+}
+
+/** Dismiss the current signal toast while leaving its record in history. */
+function dismissSignalToast(): void {
+  activeSignalToast.value = null;
+  if (signalToastTimer) window.clearTimeout(signalToastTimer);
+  signalToastTimer = undefined;
 }
 
 /** Select an existing saved rule set for live evaluation and shared backtesting. */
@@ -219,23 +304,26 @@ async function loadStrategyTemplates(): Promise<void> {
   }
 }
 
+/** Load the rule vocabulary independently of the existing built-in strategy catalog. */
+async function loadRuleOptions(): Promise<void> {
+  try {
+    ruleOptions.value = await api<RuleOptions>("/api/strategy-rule-options");
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "规则编辑器加载失败";
+  }
+}
+
 /** Restore the most recent saved strategy as soon as its metadata is available. */
 async function loadStrategyWorkspace(): Promise<void> {
-  await Promise.all([loadStrategyTemplates(), loadStrategies()]);
-  if (activeStrategy.name) return;
+  await Promise.all([loadStrategyTemplates(), loadStrategies(), loadRuleOptions()]);
+  if (activeStrategy.value.name) return;
   if (strategies.value[0]) selectStrategy(strategies.value[0]);
   else startNewStrategy();
 }
 
 /** Compare editable fields only so metadata does not create unnecessary revisions. */
 function strategyDefinition(strategy: Strategy): string {
-  return JSON.stringify([
-    strategy.name.trim(),
-    strategy.strategyType,
-    strategy.fastPeriod,
-    strategy.slowPeriod,
-    strategy.description
-  ]);
+  return JSON.stringify([strategy.name.trim(), strategyExecution(strategy), strategy.description]);
 }
 
 /** Keep the selected market aligned while leaving timeframe choice to the user. */
@@ -251,31 +339,24 @@ function alignStrategyScope(template: StrategyTemplate): void {
     symbol.value = template.defaultSymbol;
 }
 
-/** Create a draft only through the explicit new-strategy action. */
+/** Create a blank user-authored rule set, independent of the currently selected strategy. */
 function startNewStrategy(): void {
-  if (strategySaving.value) return;
-  const template = activeTemplate.value ?? strategyTemplates.value[0];
-  if (!template) return;
-  Object.assign(activeStrategy, {
-    id: "",
-    name: "新策略",
-    strategyType: template.strategyType,
-    fastPeriod: template.defaultFastPeriod,
-    slowPeriod: template.defaultSlowPeriod,
-    description: template.description,
-    version: 0,
-    updatedAt: ""
-  });
-  alignStrategyScope(template);
+  if (strategySaving.value || !ruleOptions.value) return;
+  activeStrategy.value = createCustomStrategy(symbol.value, timeframe.value);
   backtestResult.value = null;
 }
 
 /** Save once per edit, keeping the server identity and revision on the active record. */
 async function saveStrategy(): Promise<void> {
-  if (strategySaving.value || !strategyChanged.value || !activeTemplate.value)
+  if (strategySaving.value || !strategyChanged.value)
     return;
-  if (!activeStrategy.name.trim()) {
+  if (!activeStrategy.value.name.trim()) {
     error.value = "请输入策略名称";
+    return;
+  }
+  const validationError = strategyValidationError(activeStrategy.value, activeTemplate.value, ruleOptions.value);
+  if (validationError) {
+    error.value = validationError;
     return;
   }
   strategySaving.value = true;
@@ -283,11 +364,12 @@ async function saveStrategy(): Promise<void> {
     const saved = await api<Strategy>("/api/strategies", {
       method: "POST",
       body: JSON.stringify({
-        ...activeStrategy,
-        name: activeStrategy.name.trim()
+        ...activeStrategy.value,
+        name: activeStrategy.value.name.trim()
       })
     });
-    Object.assign(activeStrategy, saved);
+    activeStrategy.value = copyStrategy(saved);
+    if (saved.strategyType === "custom") symbol.value = saved.rules.symbol;
     strategies.value = [
       saved,
       ...strategies.value.filter((item) => item.id !== saved.id)
@@ -304,17 +386,22 @@ async function saveStrategy(): Promise<void> {
 function selectStrategy(strategy: Strategy): void {
   if (strategySaving.value) return;
   backtestResult.value = null;
-  Object.assign(activeStrategy, strategy);
+  activeStrategy.value = copyStrategy(strategy);
   const template = strategyTemplates.value.find(
     (item) => item.strategyType === strategy.strategyType
   );
   if (template) alignStrategyScope(template);
-  activeStrategy.strategyType = strategy.strategyType;
+  if (strategy.strategyType === "custom") symbol.value = strategy.rules.symbol;
   void loadMarket();
 }
 
 /** Run the selected rule set with the current fee and slippage inputs. */
 async function runBacktest(): Promise<void> {
+  const validationError = strategyValidationError(activeStrategy.value, activeTemplate.value, ruleOptions.value);
+  if (validationError) {
+    error.value = validationError;
+    return;
+  }
   loading.value = true;
   error.value = "";
   backtestResult.value = null;
@@ -380,27 +467,30 @@ async function testAI(): Promise<void> {
   }
 }
 
-/** Request an explanation using only the latest displayed indicators. */
+/** Explain the displayed snapshot and discard replies for superseded strategy parameters. */
 async function askAI(): Promise<void> {
-  if (!snapshot.value) return;
+  const current = snapshot.value;
+  if (!current) return;
+  const context = liveAIContext.value;
   aiBusy.value = true;
   aiResult.value = "";
   try {
     const result = await api<{ analysis: string }>("/api/ai/analyze", {
       method: "POST",
       body: JSON.stringify({
-        symbol: snapshot.value.symbol,
+        symbol: current.symbol,
         timeframe: timeframe.value,
-        sourceTime: snapshot.value.metadata.sourceTime,
-        analysisBasis: snapshot.value.metadata.analysisBasis,
-        analysis: snapshot.value.analysis,
-        strategy: snapshot.value.strategy,
-        bars: snapshot.value.bars.slice(-500)
+        sourceTime: current.metadata.sourceTime,
+        analysisBasis: current.metadata.analysisBasis,
+        analysis: current.analysis,
+        strategy: current.strategy,
+        bars: current.bars.slice(-500)
       })
     });
-    aiResult.value = result.analysis;
+    if (context === liveAIContext.value) aiResult.value = result.analysis;
   } catch (cause) {
-    aiResult.value = cause instanceof Error ? cause.message : "AI 分析失败";
+    if (context === liveAIContext.value)
+      aiResult.value = cause instanceof Error ? cause.message : "AI 分析失败";
   } finally {
     aiBusy.value = false;
   }
@@ -442,6 +532,7 @@ async function analyzeLiveMarket(): Promise<void> {
 }
 
 watch(liveAIContext, () => {
+  aiResult.value = "";
   liveAIRequestId += 1;
   liveAIResult.value = "";
   liveAIResultSourceTime.value = "";
@@ -456,6 +547,12 @@ watch(
   },
   { flush: "sync" }
 );
+watch(signalContext, () => {
+  snapshot.value = null;
+  observedSignalContext = "";
+  observedSignalFingerprint = "";
+  dismissSignalToast();
+}, { flush: "sync" });
 watch(timeframe, () => {
   marketRequestId += 1;
   snapshot.value = null;
@@ -465,13 +562,14 @@ watch(timeframe, () => {
   void loadMarket();
 });
 watch(
-  () => [activeStrategy.strategyType, activeStrategy.fastPeriod, activeStrategy.slowPeriod],
+  () => JSON.stringify([activeStrategy.value.id, strategyExecution(activeStrategy.value)]),
   () => {
     if (activeView.value === "market") void loadMarket();
   }
 );
 watch(activeView, (view) => {
-  if (view === "strategy" && (!strategies.value.length || !strategyTemplates.value.length)) {
+  if (view === "market" && !snapshot.value) void loadMarket();
+  if (view === "strategy" && (!strategies.value.length || !strategyTemplates.value.length || !ruleOptions.value)) {
     void loadStrategyWorkspace();
   }
 });
@@ -484,11 +582,12 @@ onMounted(async () => {
   }
   await Promise.all([loadStrategyWorkspace(), loadAISettings(), loadMarket()]);
   refreshTimer = window.setInterval(() => {
-    if (activeView.value === "market") void loadMarket();
+    void loadMarket();
   }, 60_000);
 });
 onUnmounted(() => {
   if (refreshTimer) window.clearInterval(refreshTimer);
+  dismissSignalToast();
 });
 </script>
 
@@ -559,7 +658,16 @@ onUnmounted(() => {
             @click="loadMarket"
           >
             <RefreshCw :size="16" :class="{ spinning: loading }" /></button
-          ><span class="avatar">QS</span>
+          >
+          <SignalCenter
+            :records="signalHistory"
+            :toast="activeSignalToast"
+            :open="signalHistoryOpen"
+            @toggle="signalHistoryOpen = !signalHistoryOpen"
+            @open-history="signalHistoryOpen = true"
+            @dismiss-toast="dismissSignalToast"
+          />
+          <span class="avatar">QS</span>
         </div>
       </header>
       <div class="content">
@@ -581,7 +689,7 @@ onUnmounted(() => {
           :timeframe-label="timeframeLabel"
           :strategies="strategies"
           :active-strategy="activeStrategy"
-          :active-template="activeTemplate"
+          :active-template="activePresentation"
           :strategy-saved="Boolean(strategies.find((item) => item.id === activeStrategy.id))"
           :strategy-changed="strategyChanged"
           :strategy-saving="strategySaving"
@@ -603,6 +711,7 @@ onUnmounted(() => {
           v-else-if="activeView === 'strategy'"
           :strategies="strategies"
           :templates="strategyTemplates"
+          :rule-options="ruleOptions"
           :strategy-loading="strategiesLoading"
           :active-strategy="activeStrategy"
           :active-template="activeTemplate"
@@ -619,8 +728,8 @@ onUnmounted(() => {
           v-else-if="activeView === 'backtest'"
           :strategy-name="activeStrategy.name"
           :strategy-type="activeStrategy.strategyType"
-          :symbol="symbol"
-          :timeframe-label="timeframeLabel"
+          :symbol="backtestRequest.symbol"
+          :timeframe-label="backtestTimeframeLabel"
           :loading="loading"
           :form="backtestForm"
           :result="backtestResult"

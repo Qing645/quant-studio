@@ -71,22 +71,74 @@ class BacktestTimingTest(unittest.TestCase):
         self.assertFalse(wrong_timeframe["supported"])
         self.assertIn("仅支持", wrong_timeframe["message"])
 
-    def test_intraday_strategy_closes_at_sample_end_without_overnight_position(self) -> None:
-        """Keep minute strategy positions flat at the end of the available session sample."""
-        close = 10 + np.sin(np.arange(180) / 8) * 0.08 + np.arange(180) * 0.001
+    def test_intraday_strategy_closes_at_complete_session_end(self) -> None:
+        """Flatten a minute strategy position only when the supplied session is complete."""
+        close = np.linspace(10.0, 10.2, 12)
         bars = pd.DataFrame({
             "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
             "open": close, "high": close + 0.02, "low": close - 0.02,
             "close": close, "volume": np.full(len(close), 1000.0),
         })
 
-        result = run_backtest(bars, 100_000, 0.0003, 5, 5, 20, "intraday_scalp")
+        def signals(_strategy, index, *_args, **_kwargs):
+            return (index == 2, False)
+
+        with patch("app.engine._strategy_signals", side_effect=signals):
+            result = run_backtest(
+                bars, 100_000, 0.0003, 5, 5, 20, "intraday_scalp",
+                session_complete=True,
+            )
 
         self.assertFalse(result["openPosition"])
+        self.assertEqual(result["tradeCount"], 1)
+        self.assertEqual(result["trades"][0]["exit"], bars.iloc[-1]["datetime"].isoformat())
         self.assertIsNone(result["annualizedReturnPct"])
         self.assertIsNone(result["sharpe"])
         self.assertIn("当日分钟样本", result["sampleWarning"])
         self.assertTrue(all(trade["exit"][:10] == trade["entry"][:10] for trade in result["trades"]))
+
+    def test_intraday_partial_sample_keeps_position_open_and_marks_to_market(self) -> None:
+        """Do not turn a still-running session sample into a completed trade."""
+        close = np.linspace(10.0, 10.2, 12)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
+            "open": close, "high": close + 0.02, "low": close - 0.02,
+            "close": close, "volume": np.full(len(close), 1000.0),
+        })
+
+        def signals(_strategy, index, *_args, **_kwargs):
+            return (index == 2, False)
+
+        with patch("app.engine._strategy_signals", side_effect=signals):
+            result = run_backtest(bars, 100_000, 0, 0, 5, 20, "intraday_scalp")
+
+        self.assertTrue(result["openPosition"])
+        self.assertEqual(result["tradeCount"], 0)
+        self.assertGreater(result["finalEquity"], 100_000)
+        self.assertEqual(result["openPositions"][0]["currentPrice"], float(close[-1]))
+
+    def test_intraday_backtest_flattens_each_completed_day_in_a_multi_day_sample(self) -> None:
+        """Close completed sessions at their last bar while preserving the final partial session."""
+        close = np.linspace(10.0, 10.2, 8)
+        dates = pd.DatetimeIndex([
+            "2026-11-02 09:30", "2026-11-02 09:31", "2026-11-02 09:32", "2026-11-02 15:00",
+            "2026-11-03 09:30", "2026-11-03 09:31", "2026-11-03 09:32", "2026-11-03 09:33",
+        ])
+        bars = pd.DataFrame({
+            "datetime": dates, "open": close, "high": close + 0.02,
+            "low": close - 0.02, "close": close, "volume": np.full(len(close), 1000.0),
+        })
+
+        def signals(_strategy, index, *_args, **_kwargs):
+            return (index in {2, 6}, False)
+
+        with patch("app.engine._strategy_signals", side_effect=signals):
+            result = run_backtest(bars, 100_000, 0, 0, 5, 20, "intraday_scalp")
+
+        self.assertTrue(result["openPosition"])
+        self.assertEqual(result["tradeCount"], 1)
+        self.assertEqual(result["trades"][0]["exit"], dates[3].isoformat())
+        self.assertEqual(result["openPositions"][0]["entry"], dates[6].isoformat())
 
     def test_swing_breakout_reports_comparable_benchmark_rolling_and_cost_scenarios(self) -> None:
         """Compare the daily swing rule with its tradable sample and cost assumptions."""
@@ -202,6 +254,23 @@ class BacktestTimingTest(unittest.TestCase):
             result["benchmark"]["totalReturnPct"],
             (close[-1] / close[0] - 1) * 100,
         )
+
+    def test_live_intraday_exit_is_labeled_as_a_condition_not_an_action(self) -> None:
+        """Avoid presenting indicator conditions as position-aware sell instructions."""
+        close = np.full(30, 10.0)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
+            "open": close, "high": close + 0.02, "low": close - 0.02,
+            "close": close, "volume": np.full(len(close), 1000.0),
+        })
+
+        with patch("app.engine._session_vwap", return_value=np.full(len(close), 11.0)):
+            result = analyze_strategy(bars, "intraday_scalp", 5, 20, "159977", "intraday")
+
+        self.assertTrue(result["exitCondition"])
+        self.assertEqual(result["signal"], "日内离场观察条件触发")
+        self.assertEqual(result["action"], "observe")
+        self.assertIn("没有实时持仓与持有时长", result["message"])
 
     def test_swing_breakout_live_signal_requires_daily_scope(self) -> None:
         """Keep the daily swing rule distinct from minute analysis."""

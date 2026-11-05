@@ -343,8 +343,22 @@ class MarketAdapterTest(unittest.TestCase):
     def test_intraday_feed_can_return_before_indicator_warmup(self) -> None:
         payload = {"data": {"sz159977": {"data": {"date": "20261102", "data": ["0930 1.0 10"]}}}}
         with patch("app.market._get_json", return_value=payload), patch("app.market.is_market_open", return_value=False):
-            bars, _ = fetch_bars("159977", "intraday")
+            bars, metadata = fetch_bars("159977", "intraday")
         self.assertEqual(len(bars), 1)
+        self.assertFalse(metadata["sessionComplete"])
+
+    def test_intraday_session_completion_uses_last_bar_time_not_market_open_flag(self) -> None:
+        partial = {"data": {"sz159977": {"data": {"date": "20261102", "data": [
+            "0930 1.0 10", "1130 1.01 20",
+        ]}}}}
+        complete = {"data": {"sz159977": {"data": {"date": "20261102", "data": [
+            "0930 1.0 10", "1130 1.01 20", "1300 1.02 30", "1500 1.03 40",
+        ]}}}}
+        with patch("app.market._get_json", side_effect=[partial, complete]), patch("app.market.is_market_open", return_value=False):
+            _, lunch_metadata = fetch_bars("159977", "intraday")
+            _, close_metadata = fetch_bars("159977", "intraday")
+        self.assertFalse(lunch_metadata["sessionComplete"])
+        self.assertTrue(close_metadata["sessionComplete"])
 
     def test_intraday_signal_uses_five_day_history_but_returns_today_chart(self) -> None:
         chart_bars = pd.DataFrame([{
@@ -409,6 +423,29 @@ class MarketAdapterTest(unittest.TestCase):
                 fastPeriod=5, slowPeriod=20,
             ))
         self.assertEqual(captured.exception.status_code, 422)
+
+    def test_intraday_backtest_only_marks_session_complete_outside_market_hours(self) -> None:
+        """Pass feed session state to the backtester so intraday samples are not prematurely flattened."""
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=4, freq="min"),
+            "open": [1.0] * 4, "high": [1.1] * 4, "low": [0.9] * 4,
+            "close": [1.0] * 4, "volume": [100.0] * 4,
+        })
+        request = BacktestInput(
+            symbol="159977", timeframe="intraday", strategyType="intraday_scalp",
+            fastPeriod=5, slowPeriod=20,
+        )
+
+        for metadata, expected_complete in (
+            ({"marketOpen": True, "sessionComplete": False}, False),
+            ({"marketOpen": False, "sessionComplete": False}, False),
+            ({"marketOpen": False, "sessionComplete": True}, True),
+        ):
+            with self.subTest(metadata=metadata), \
+                    patch("app.main.fetch_bars", return_value=(bars, metadata)), \
+                    patch("app.main.run_backtest", return_value={}) as run:
+                backtest_endpoint(request)
+                self.assertEqual(run.call_args.kwargs["session_complete"], expected_complete)
 
     def test_weekly_and_monthly_requests_use_their_adjusted_rows(self) -> None:
         start = date(2020, 1, 1)

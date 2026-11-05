@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 import talib
 
-from .strategies import get_strategy_template
+from .custom_rules import CustomRules, RuleEvaluator, normalize_custom_rules
+from .strategies import get_strategy_template, normalize_strategy_parameters
 
 SUPPORTED_STRATEGIES = {"trend_filter", "swing_breakout", "intraday_scalp"}
 REQUIRED_BAR_COLUMNS = ("datetime", "open", "high", "low", "close", "volume")
@@ -37,17 +38,27 @@ def run_backtest(
     initial_capital: float,
     fee_rate: float,
     slippage_bps: float,
-    fast_period: int,
-    slow_period: int,
+    fast_period: int | None = 20,
+    slow_period: int | None = 60,
     strategy_type: str = "trend_filter",
     *,
+    parameters: dict[str, Any] | None = None,
+    rules: CustomRules | dict[str, Any] | None = None,
+    session_complete: bool = False,
     _include_cost_sensitivity: bool = True,
 ) -> dict[str, Any]:
-    """Simulate next-bar execution and return portfolio and trade statistics."""
-    if fast_period < 2 or slow_period <= fast_period or slow_period > 250:
-        raise ValueError("均线周期需满足 2 <= 快线 < 慢线 <= 250")
-    if strategy_type not in SUPPORTED_STRATEGIES:
-        raise ValueError("不支持的策略类型")
+    """Simulate next-bar execution; flatten intraday positions only after a complete session."""
+    custom = normalize_custom_rules(rules) if strategy_type == "custom" else None
+    if custom and parameters:
+        raise ValueError("自定义策略不能混入内置策略参数")
+    if not custom and rules is not None:
+        raise ValueError("内置策略不能混入自定义规则")
+    if custom is None:
+        if fast_period is None or slow_period is None or fast_period < 2 or slow_period <= fast_period or slow_period > 250:
+            raise ValueError("均线周期需满足 2 <= 快线 < 慢线 <= 250")
+        if strategy_type not in SUPPORTED_STRATEGIES:
+            raise ValueError("不支持的策略类型")
+        parameters = normalize_strategy_parameters(strategy_type, parameters)
     _validate_bars(bars)
     if initial_capital <= 0 or not 0 <= fee_rate <= 0.02 or not 0 <= slippage_bps <= 500:
         raise ValueError("资金、手续费或滑点参数超出允许范围")
@@ -55,14 +66,22 @@ def run_backtest(
     open_price = bars["open"].to_numpy(dtype=np.float64)
     high = bars["high"].to_numpy(dtype=np.float64)
     low = bars["low"].to_numpy(dtype=np.float64)
-    fast = talib.SMA(close, timeperiod=fast_period)
-    slow = talib.SMA(close, timeperiod=slow_period)
-    regime_sma = talib.SMA(close, timeperiod=60) if strategy_type == "swing_breakout" else slow
-    ema_fast = talib.EMA(close, timeperiod=fast_period)
-    ema_slow = talib.EMA(close, timeperiod=slow_period)
-    atr = talib.ATR(high, low, close, timeperiod=20)
+    session_dates = bars["datetime"].dt.date.to_numpy()
+    if custom:
+        # Independent rules do not use the fixed periods of a built-in strategy.
+        fast = slow = regime_sma = ema_fast = ema_slow = atr = np.full(len(bars), np.nan)
+    else:
+        fast = talib.SMA(close, timeperiod=fast_period)
+        slow = talib.SMA(close, timeperiod=slow_period)
+        regime_sma = talib.SMA(close, timeperiod=60) if strategy_type == "swing_breakout" else slow
+        ema_fast = talib.EMA(close, timeperiod=fast_period)
+        ema_slow = talib.EMA(close, timeperiod=slow_period)
+        atr = talib.ATR(high, low, close, timeperiod=20)
     volume = bars["volume"].to_numpy(dtype=np.float64)
     vwap = _session_vwap(bars) if strategy_type == "intraday_scalp" else np.full(len(bars), np.nan)
+    evaluator = RuleEvaluator(bars, custom) if custom else None
+    minute_strategy = strategy_type == "intraday_scalp" or bool(custom and custom.timeframe == "intraday")
+    flatten_session = strategy_type == "intraday_scalp" or bool(custom and custom.closeAtSessionEnd)
     cash = initial_capital
     shares = 0.0
     entry_value = 0.0
@@ -79,7 +98,9 @@ def run_backtest(
     transaction_cost_curve = np.zeros(len(bars), dtype=float)
     rebalance_count = 0
     cost_rate = fee_rate + slippage_bps / 10_000
-    template = get_strategy_template(strategy_type)
+    template = get_strategy_template(strategy_type) if custom is None else {
+        "caveat": "自定义规则研究回测；条件和风险退出均使用完成K线、下一根开盘执行，止损不保证成交价格；启用日终平仓时按完整交易日末收盘价成交。未覆盖市场冲击和交易制度限制。"
+    }
     annualized_volatility = np.full(len(bars), np.nan, dtype=float)
     if strategy_type == "trend_filter":
         # Use completed returns only so sizing cannot see the execution bar.
@@ -87,41 +108,68 @@ def run_backtest(
         annualized_volatility = daily_returns.rolling(20, min_periods=20).std().to_numpy() * np.sqrt(252)
     # A signal on bar N executes at bar N+1 open to avoid same-bar lookahead.
     for index in range(len(bars)):
-        if index > 1:
-            crossed_up, crossed_down = _strategy_signals(
-                strategy_type, index, close, fast, slow, regime_sma, template,
-                high=high, volume=volume,
-                ema_fast=ema_fast, ema_slow=ema_slow, atr=atr, vwap=vwap,
-                fast_period=fast_period, slow_period=slow_period,
-            )
+        if index > 1 or (custom and index > 0):
+            if evaluator is not None:
+                signal_index = index - 1
+                ready = evaluator.entry_ready[signal_index] and evaluator.exit_ready[signal_index]
+                crossed_up = bool(ready and evaluator.entry[signal_index])
+                crossed_down = bool(ready and evaluator.exit[signal_index])
+                # A daily-flat minute rule must not carry yesterday's entry into today's open.
+                if flatten_session and session_dates[index] != session_dates[signal_index]:
+                    crossed_up = False
+            else:
+                crossed_up, crossed_down = _strategy_signals(
+                    strategy_type, index, close, fast, slow, regime_sma, template,
+                    high=high, volume=volume,
+                    ema_fast=ema_fast, ema_slow=ema_slow, atr=atr, vwap=vwap,
+                    fast_period=fast_period, slow_period=slow_period, parameters=parameters,
+                )
+            custom_risk_exit = False
+            if custom and shares > 0:
+                # Risk exits read only completed post-entry closes, independently of the holding gate.
+                signal_index = index - 1
+                highest_close_since_entry = max(highest_close_since_entry, close[signal_index])
+                raw_entry = entry_price / (1 + cost_rate)
+                custom_risk_exit = bool(
+                    (custom.stopLossPct and close[signal_index] <= raw_entry * (1 - custom.stopLossPct / 100))
+                    or (custom.takeProfitPct and close[signal_index] >= raw_entry * (1 + custom.takeProfitPct / 100))
+                    or (custom.trailingStopPct and close[signal_index] <= highest_close_since_entry * (1 - custom.trailingStopPct / 100))
+                )
             if strategy_type == "intraday_scalp" and shares > 0:
                 signal_index = index - 1
                 highest_close_since_entry = max(highest_close_since_entry, close[signal_index])
                 atr_stop = (
-                    close[signal_index] <= highest_close_since_entry - 1.5 * atr[signal_index]
+                    close[signal_index] <= highest_close_since_entry - parameters["atrMultiplier"] * atr[signal_index]
                     if np.isfinite(atr[signal_index]) else False
                 )
                 crossed_down = crossed_down or atr_stop
-            force_intraday_close = strategy_type == "intraday_scalp" and index == len(bars) - 1 and shares > 0
-            minimum_hold_elapsed = strategy_type != "intraday_scalp" or index - entry_index >= 3
+            session_end = (
+                index < len(bars) - 1 and session_dates[index] != session_dates[index + 1]
+            ) or (index == len(bars) - 1 and session_complete)
+            force_intraday_close = flatten_session and session_end and shares > 0
+            minimum_hold_elapsed = strategy_type != "intraday_scalp" or index - entry_index >= parameters["minHoldBars"]
+            if custom:
+                minimum_hold_elapsed = index - entry_index >= custom.minHoldBars
             execution_price = open_price[index] * (1 + cost_rate)
-            if shares == 0 and crossed_up and not (strategy_type == "intraday_scalp" and index == len(bars) - 1):
+            if shares == 0 and crossed_up and not (flatten_session and session_end) and not (custom and crossed_down):
                 if strategy_type == "trend_filter":
                     signal_volatility = annualized_volatility[index - 1]
                     # Keep excess capital in cash when volatility exceeds the risk budget.
-                    target_weight = min(1.0, 0.20 / signal_volatility) if np.isfinite(signal_volatility) and signal_volatility > 0 else 0.0
+                    target_weight = min(1.0, (parameters["targetVolatilityPct"] / 100) / signal_volatility) if np.isfinite(signal_volatility) and signal_volatility > 0 else 0.0
                     entry_value = cash * target_weight
+                elif custom:
+                    entry_value = cash * custom.positionPct / 100
                 else:
                     entry_value = cash
                 shares = entry_value / execution_price
                 entry_time = bars.iloc[index]["datetime"].isoformat()
                 entry_index = index
-                highest_close_since_entry = close[index - 1]
+                highest_close_since_entry = open_price[index] if custom else close[index - 1]
                 entry_price = float(execution_price)
                 entry_cost = float(shares * open_price[index] * cost_rate)
                 transaction_cost_curve[index] += entry_cost
                 cash -= entry_value
-            elif shares > 0 and (force_intraday_close or (crossed_down and minimum_hold_elapsed)):
+            elif shares > 0 and (force_intraday_close or custom_risk_exit or (crossed_down and minimum_hold_elapsed)):
                 raw_exit_price = close[index] if force_intraday_close else open_price[index]
                 exit_price = raw_exit_price * (1 - cost_rate)
                 proceeds = realized_proceeds + shares * exit_price
@@ -153,7 +201,7 @@ def run_backtest(
             ):
                 signal_volatility = annualized_volatility[index - 1]
                 if np.isfinite(signal_volatility) and signal_volatility > 0:
-                    target_weight = min(1.0, 0.20 / signal_volatility)
+                    target_weight = min(1.0, (parameters["targetVolatilityPct"] / 100) / signal_volatility)
                     current_value = shares * open_price[index]
                     target_value = (cash + current_value) * target_weight
                     delta_value = target_value - current_value
@@ -179,11 +227,11 @@ def run_backtest(
                         rebalance_count += 1
         equity_value = cash + shares * close[index]
         equity.append({"time": bars.iloc[index]["datetime"].isoformat(), "value": float(equity_value)})
-        if strategy_type == "intraday_scalp":
+        if minute_strategy:
             benchmark_equity.append(initial_capital * close[index] / close[0])
         exposure_curve.append(
             float(shares * close[index] / equity_value)
-            if strategy_type == "trend_filter" and equity_value else float(shares > 0)
+            if (strategy_type == "trend_filter" or custom) and equity_value else float(shares > 0)
         )
 
     final_equity = equity[-1]["value"]
@@ -200,20 +248,23 @@ def run_backtest(
         if strategy_type == "swing_breakout"
         else 0
     )
+    if evaluator is not None:
+        ready_indexes = np.flatnonzero(evaluator.entry_ready & evaluator.exit_ready)
+        comparison_start = min(len(bars) - 1, int(ready_indexes[0]) + 1) if ready_indexes.size else len(bars) - 1
     # Equity includes the initial cash balance during warmup, so annualize over
     # the full first-to-last return interval rather than only eligible bars.
-    annualized = 0.0 if strategy_type == "intraday_scalp" else (final_equity / initial_capital) ** (annualizer / max(len(bars) - 1, 1)) - 1
+    annualized = 0.0 if minute_strategy else (final_equity / initial_capital) ** (annualizer / max(len(bars) - 1, 1)) - 1
     # Returns are indexed by their ending bar, so include the interval ending
     # on the first eligible strategy bar in the Sharpe sample.
-    metric_start = max(comparison_start - 1, 0) if strategy_type == "trend_filter" else 0
+    metric_start = max(comparison_start - 1, 0) if strategy_type == "trend_filter" or custom else 0
     metric_returns = returns[metric_start:]
     result = {
         "initialCapital": initial_capital,
         "finalEquity": float(final_equity),
         "totalReturnPct": float((final_equity / initial_capital - 1) * 100),
-        "annualizedReturnPct": None if strategy_type == "intraday_scalp" else float(annualized * 100),
+        "annualizedReturnPct": None if minute_strategy else float(annualized * 100),
         "maxDrawdownPct": float(drawdowns.min() * 100),
-        "sharpe": None if strategy_type == "intraday_scalp" else float(np.sqrt(annualizer) * metric_returns.mean() / metric_returns.std()) if metric_returns.size and metric_returns.std() else 0.0,
+        "sharpe": None if minute_strategy else float(np.sqrt(annualizer) * metric_returns.mean() / metric_returns.std()) if metric_returns.size and metric_returns.std() else 0.0,
         "winRatePct": float(np.mean([trade["returnPct"] > 0 for trade in trades]) * 100) if trades else 0.0,
         "tradeCount": len(trades),
         "exposurePct": float(np.mean(exposure_curve) * 100) if exposure_curve else 0.0,
@@ -231,7 +282,7 @@ def run_backtest(
         "strategyType": strategy_type,
         "caveat": template["caveat"],
     }
-    if strategy_type == "intraday_scalp":
+    if minute_strategy:
         result["sampleWarning"] = "仅回测当前可获取的当日分钟样本；该结果不能代表长期策略表现。"
         benchmark = np.asarray(benchmark_equity, dtype=float)
         benchmark_drawdown = benchmark / np.maximum.accumulate(benchmark) - 1
@@ -244,7 +295,7 @@ def run_backtest(
                 for point, value in zip(equity, benchmark)
             ],
         }
-    if strategy_type in {"trend_filter", "swing_breakout"}:
+    if strategy_type in {"trend_filter", "swing_breakout"} or (custom and not minute_strategy):
         benchmark_curve = np.full(len(close), initial_capital, dtype=float)
         benchmark_curve[comparison_start:] = initial_capital * close[comparison_start:] / close[comparison_start]
         benchmark_drawdown = benchmark_curve / np.maximum.accumulate(benchmark_curve) - 1
@@ -281,6 +332,7 @@ def run_backtest(
                 fast_period,
                 slow_period,
                 strategy_type,
+                parameters=parameters,
                 _include_cost_sensitivity=False,
             )
             sensitivity.append({
@@ -290,20 +342,37 @@ def run_backtest(
             })
         result["costSensitivity"] = sensitivity
     if strategy_type == "trend_filter":
-        result["positionSizingTargetVolatilityPct"] = 20.0
+        result["positionSizingTargetVolatilityPct"] = parameters["targetVolatilityPct"]
         result["rebalanceCount"] = rebalance_count
+    if custom:
+        result["rules"] = custom.model_dump(exclude_none=True)
+    else:
+        result["parameters"] = parameters
     return result
 
 
 def analyze_strategy(
     bars: pd.DataFrame,
     strategy_type: str,
-    fast_period: int,
-    slow_period: int,
+    fast_period: int | None,
+    slow_period: int | None,
     symbol: str,
     timeframe: str,
+    *,
+    parameters: dict[str, Any] | None = None,
+    rules: CustomRules | dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Evaluate the selected daily strategy against the latest completed bar."""
+    if strategy_type == "custom":
+        custom = normalize_custom_rules(rules)
+        if symbol != custom.symbol or timeframe != custom.timeframe:
+            return {"supported": False, "signal": "当前行情不适用", "asOf": None,
+                    "message": f"此策略配置为 {custom.symbol} / {custom.timeframe}，当前行情仍可浏览，策略信号不计算。"}
+        if len(bars) < 2:
+            return {"supported": True, "signal": "数据不足", "asOf": None, "message": "至少需要两根已完成K线。"}
+        _validate_bars(bars)
+        return RuleEvaluator(bars, custom).live_signal()
+    parameters = normalize_strategy_parameters(strategy_type, parameters)
     template = get_strategy_template(strategy_type)
     if timeframe not in template["supportedTimeframes"]:
         return {
@@ -319,7 +388,7 @@ def analyze_strategy(
             "message": template["scopeError"],
             "asOf": None,
         }
-    if fast_period < 2 or slow_period <= fast_period or slow_period > 250:
+    if fast_period is None or slow_period is None or fast_period < 2 or slow_period <= fast_period or slow_period > 250:
         raise ValueError("均线周期需满足 2 <= 快线 < 慢线 <= 250")
     if len(bars) < 2:
         return {
@@ -338,6 +407,9 @@ def analyze_strategy(
     result: dict[str, Any] = {
         "supported": True,
         "strategyType": strategy_type,
+        "parameters": parameters,
+        "fastPeriod": fast_period,
+        "slowPeriod": slow_period,
         "asOf": bars.iloc[latest]["datetime"].isoformat(),
         "price": float(close[latest]),
         "basis": "分钟K" if strategy_type == "intraday_scalp" else "日K",
@@ -365,7 +437,21 @@ def analyze_strategy(
             (close[latest] < vwap[latest] and close[latest - 1] < vwap[latest - 1])
             or (ema_fast[latest] < ema_slow[latest] and ema_fast[latest - 1] < ema_slow[latest - 1])
         )
-        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "日内入场条件触发" if entry else "日内退出条件触发" if exit_ else "等待分钟信号", "message": f"EMA{fast_period} {ema_fast[latest]:.4f} / EMA{slow_period} {ema_slow[latest]:.4f}；VWAP {vwap[latest]:.4f}。入场要求连续两根站在VWAP上方；持仓至少3根分钟K，只做日内不隔夜。"})
+        result.update({
+            "entryCondition": entry,
+            "exitCondition": exit_,
+            "signal": (
+                "日内入场观察条件触发" if entry
+                else "日内离场观察条件触发" if exit_
+                else "等待分钟信号"
+            ),
+            "action": "observe",
+            "message": (
+                f"EMA{fast_period} {ema_fast[latest]:.4f} / EMA{slow_period} {ema_slow[latest]:.4f}；"
+                f"VWAP {vwap[latest]:.4f}。这里只展示指标条件；当前窗口没有实时持仓与持有时长，"
+                f"不能据此判断实际买卖。回测会执行最短持有{parameters['minHoldBars']}根分钟K和{parameters['atrMultiplier']:g}倍ATR风险退出。"
+            ),
+        })
         return result
 
     fast = talib.SMA(close, timeperiod=fast_period)
@@ -376,14 +462,14 @@ def analyze_strategy(
         entry, exit_ = _strategy_signals(
             strategy_type, len(bars), close, fast, slow, regime_sma, template,
             high=high, volume=bars["volume"].to_numpy(dtype=np.float64), atr=atr,
-            fast_period=fast_period, slow_period=slow_period,
+            fast_period=fast_period, slow_period=slow_period, parameters=parameters,
         )
         if latest < 1 or not np.isfinite([
             fast[latest], fast[latest - 1], regime_sma[latest], atr[latest],
         ]).all():
             result.update({"signal": "数据不足", "message": "当前样本不足以计算日K波段条件。"})
             return result
-        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "波段入场条件触发" if entry else "波段风险退出触发" if exit_ else "等待日K突破", "message": f"收盘 {close[latest]:.3f}；SMA60 {regime_sma[latest]:.3f}；ATR20 {atr[latest]:.3f}。离场需连续两根收盘低于快线或触发 ATR 跟踪风险线。信号下一根日K开盘执行。"})
+        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "波段入场条件触发" if entry else "波段风险退出触发" if exit_ else "等待日K突破", "message": f"收盘 {close[latest]:.3f}；SMA60 {regime_sma[latest]:.3f}；ATR20 {atr[latest]:.3f}。离场需连续两根收盘低于快线或触发 {parameters['atrMultiplier']:g} 倍ATR跟踪风险线；放量门槛为 {parameters['volumeMultiplier']:g} 倍。信号下一根日K开盘执行。"})
         return result
 
     if strategy_type == "trend_filter":
@@ -426,6 +512,7 @@ def analyze_strategy(
                 f"收盘价 {close[latest]:.3f}，SMA{slow_period} 为 {slow[latest]:.3f}，"
                 f"SMA{regime_period} 为 {regime_sma[latest]:.3f}；"
                 + ("出现显著反弹，但尚未完成趋势修复。" if rebound else "离场需要连续两根弱势收盘确认。")
+                + f" 仓位目标年化波动率{parameters['targetVolatilityPct']:g}%，上限100%，在开仓及月初按已完成日K估算。"
             ),
             "regime": regime,
             "action": action,
@@ -483,6 +570,7 @@ def _strategy_signals(
     regime_sma: np.ndarray,
     template: dict[str, Any],
     *,
+    parameters: dict[str, Any] | None = None,
     fast_period: int = 20,
     slow_period: int = 60,
     high: np.ndarray | None = None,
@@ -493,6 +581,8 @@ def _strategy_signals(
     vwap: np.ndarray | None = None,
 ) -> tuple[bool, bool]:
     """Evaluate the selected strategy on the signal bar before next-open execution."""
+    if parameters is None:
+        parameters = normalize_strategy_parameters(strategy_type)
     current = index - 1
     previous = current - 1
     if strategy_type == "swing_breakout":
@@ -503,10 +593,10 @@ def _strategy_signals(
         entry = bool(
             close[current] > prior_high
             and close[current] > regime_sma[current]
-            and volume[current] > volume_base * 1.2
+            and volume[current] > volume_base * parameters["volumeMultiplier"]
         )
         fast_line_exit = close[current] < fast[current] and close[previous] < fast[previous]
-        trailing_atr_exit = close[current] < np.max(close[max(0, current - 20):current + 1]) - 2 * atr[current]
+        trailing_atr_exit = close[current] < np.max(close[max(0, current - 20):current + 1]) - parameters["atrMultiplier"] * atr[current]
         exit_ = bool(fast_line_exit or trailing_atr_exit)
         return entry, exit_
     if strategy_type == "intraday_scalp":

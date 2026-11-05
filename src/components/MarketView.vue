@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Activity, Bot, ChartCandlestick, Database, LoaderCircle, RefreshCw, Sparkles, Wifi } from "@lucide/vue";
 import MarketChart from "./MarketChart.vue";
-import type { MarketSnapshot, Strategy, StrategyTemplate, Timeframe, TimeframeOption } from "../types";
+import type { MarketSnapshot, Strategy, StrategyPresentation, Timeframe, TimeframeOption } from "../types";
 
 const props = defineProps<{
   symbol: string;
@@ -17,7 +17,7 @@ const props = defineProps<{
   timeframeLabel: string;
   strategies: Strategy[];
   activeStrategy: Strategy;
-  activeTemplate: StrategyTemplate | undefined;
+  activeTemplate: StrategyPresentation | undefined;
   strategySaved: boolean;
   strategyChanged: boolean;
   strategySaving: boolean;
@@ -95,8 +95,8 @@ function updateStrategy(event: Event): void {
     <aside class="analysis-panel">
       <div class="section-head"><div><h2>策略判断</h2><span>{{ activeStrategy.name || activeTemplate?.label || '未选择策略' }} · {{ snapshot?.strategy.asOf ? `信号截至 ${snapshot.strategy.asOf.slice(0, 10)}` : snapshot?.metadata.analysisBasis ?? '等待数据' }}<em v-if="snapshot?.strategy.barStatus === 'in_progress'"> · 盘中待收盘确认</em><em v-else-if="snapshot?.strategy.barStatus === 'completed'"> · 收盘确认</em></span></div><span class="signal-tag" :class="snapshot?.strategy.entryCondition ? 'signal-positive' : ''">{{ snapshot?.strategy.signal ?? "等待数据" }}</span></div>
       <div v-if="snapshot?.strategy.supported" class="condition-list">
-        <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.entryCondition }"><Activity :size="15" /></span><span>{{ activeTemplate?.entryLabel ?? '入场条件' }} <small>{{ activeTemplate?.entryRule.replaceAll('{fastPeriod}', String(activeStrategy.fastPeriod)).replaceAll('{slowPeriod}', String(activeStrategy.slowPeriod)) }}</small></span><b :class="snapshot.strategy.entryCondition ? 'up' : 'muted'">{{ snapshot.strategy.entryCondition ? '触发' : '未触发' }}</b></div>
-        <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.exitCondition }"><ChartCandlestick :size="15" /></span><span>{{ activeTemplate?.exitLabel ?? '退出条件' }} <small>{{ activeTemplate?.exitRule.replaceAll('{fastPeriod}', String(activeStrategy.fastPeriod)).replaceAll('{slowPeriod}', String(activeStrategy.slowPeriod)) }}</small></span><b :class="snapshot.strategy.exitCondition ? 'down' : 'muted'">{{ snapshot.strategy.exitCondition ? '触发' : '未触发' }}</b></div>
+        <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.entryCondition }"><Activity :size="15" /></span><span>{{ activeTemplate?.entryLabel ?? '入场条件' }} <small>{{ activeTemplate?.entryRule }}</small></span><b :class="snapshot.strategy.entryCondition ? 'up' : 'muted'">{{ snapshot.strategy.entryCondition ? '触发' : '未触发' }}</b></div>
+        <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.exitCondition }"><ChartCandlestick :size="15" /></span><span>{{ activeTemplate?.exitLabel ?? '退出条件' }} <small>{{ activeTemplate?.exitRule }}</small></span><b :class="snapshot.strategy.exitCondition ? 'down' : 'muted'">{{ snapshot.strategy.exitCondition ? '触发' : '未触发' }}</b></div>
       </div>
       <div v-if="snapshot && !snapshot.strategy.supported" class="assessment"><div class="assessment-title"><Database :size="14" /> 实时策略未生效</div><p>当前策略基于{{ activeTemplate?.scopeLabel || '指定行情周期' }}，所选周期为{{ timeframeLabel }}；行情仍正常显示，策略信号不计算。{{ snapshot.strategy.message }}</p></div>
       <div v-else-if="snapshot?.strategy.message" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号说明</div><p>{{ snapshot.strategy.message }}</p></div>

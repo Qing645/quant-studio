@@ -18,11 +18,12 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from http.client import HTTPException as ClientHTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .custom_rules import CustomRules, completed_custom_bars, get_rule_options, normalize_custom_rules
 from .engine import analyze_strategy, run_backtest
 from .market import analyze, fetch_bars, fetch_daily_history, normalize_symbol
-from .strategies import get_strategy_template, get_strategy_templates
+from .strategies import get_strategy_template, get_strategy_templates, normalize_strategy_parameters
 
 
 APP_ROOT = Path(__file__).resolve().parents[2]
@@ -41,24 +42,51 @@ app.add_middleware(
 )
 
 
-class StrategyInput(BaseModel):
+class StrategyRules(BaseModel):
+    """Validate independent user rules or the existing built-in configuration contract."""
+
+    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp", "custom"] = "trend_filter"
+    fastPeriod: int | None = Field(default=None, ge=2, le=100)
+    slowPeriod: int | None = Field(default=None, ge=3, le=250)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    rules: CustomRules | None = None
+
+    @model_validator(mode="after")
+    def validate_rules(self) -> StrategyRules:
+        """Keep rule definitions separate from the legacy algorithm-specific parameter fields."""
+        if self.strategyType == "custom":
+            if self.rules is None:
+                raise ValueError("自定义策略必须填写入场、离场和风控规则")
+            if self.fastPeriod is not None or self.slowPeriod is not None or self.parameters:
+                raise ValueError("自定义策略使用独立规则，不能混入内置策略参数")
+        else:
+            if self.rules is not None:
+                raise ValueError("内置策略不能混入自定义规则")
+            template = get_strategy_template(self.strategyType)
+            self.fastPeriod = self.fastPeriod if self.fastPeriod is not None else template["defaultFastPeriod"]
+            self.slowPeriod = self.slowPeriod if self.slowPeriod is not None else template["defaultSlowPeriod"]
+            if self.fastPeriod >= self.slowPeriod:
+                raise ValueError("快线周期必须小于慢线周期")
+            self.parameters = normalize_strategy_parameters(self.strategyType, self.parameters)
+        return self
+
+
+class StrategyInput(StrategyRules):
+    """An independently versioned strategy instance with user-authored metadata."""
+
     id: str | None = None
     name: str = Field(min_length=1, max_length=60)
-    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp"] = "trend_filter"
-    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultFastPeriod"], ge=2, le=100)
-    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultSlowPeriod"], ge=3, le=250)
     description: str = Field(default="", max_length=500)
 
 
-class BacktestInput(BaseModel):
+class BacktestInput(StrategyRules):
+    """Historical execution settings combined with the selected strategy rules."""
+
     symbol: str = "159977"
     timeframe: Literal["intraday", "five_day", "daily", "weekly", "monthly"] = "daily"
-    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp"] = "trend_filter"
     initialCapital: float = Field(default=100_000, gt=0, le=100_000_000)
     feeRate: float = Field(default=0.0003, ge=0, le=0.02)
     slippageBps: float = Field(default=5, ge=0, le=500)
-    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultFastPeriod"], ge=2, le=100)
-    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultSlowPeriod"], ge=3, le=250)
 
 
 class AISettings(BaseModel):
@@ -108,16 +136,26 @@ def health() -> dict[str, str]:
 def market(
     symbol: str = "159977",
     timeframe: Literal["intraday", "five_day", "daily", "weekly", "monthly"] = "daily",
-    strategyType: Annotated[Literal["trend_filter", "swing_breakout", "intraday_scalp"], Query()] = "trend_filter",
-    fastPeriod: Annotated[int, Query(ge=2, le=100)] = 20,
-    slowPeriod: Annotated[int, Query(ge=3, le=250)] = 60,
+    strategyType: Annotated[Literal["trend_filter", "swing_breakout", "intraday_scalp", "custom"], Query()] = "trend_filter",
+    fastPeriod: Annotated[int | None, Query(ge=2, le=100)] = None,
+    slowPeriod: Annotated[int | None, Query(ge=3, le=250)] = None,
+    parameters: Annotated[str, Query(max_length=2000)] = "{}",
+    rules: Annotated[str | None, Query(max_length=20000)] = None,
 ) -> dict[str, Any]:
     """Return public bars, technical indicators and the selected strategy signal."""
     try:
         if timeframe not in SUPPORTED_TIMEFRAMES:
             raise HTTPException(status_code=422, detail="不支持的行情周期")
-        if fastPeriod >= slowPeriod:
-            raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
+        try:
+            decoded_parameters = json.loads(parameters)
+            if not isinstance(decoded_parameters, dict):
+                raise ValueError("策略参数必须为对象")
+            settings = StrategyRules.model_validate({
+                "strategyType": strategyType, "fastPeriod": fastPeriod, "slowPeriod": slowPeriod,
+                "parameters": decoded_parameters, "rules": json.loads(rules) if rules is not None else None,
+            })
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         code = normalize_symbol(symbol)
         bars, metadata = fetch_bars(code, timeframe)
         analysis_bars = bars
@@ -126,7 +164,7 @@ def market(
             analysis_bars, _ = fetch_bars(code, "five_day")
             metadata["analysisBasis"] = (
                 "当日分钟K线"
-                if strategyType == "intraday_scalp"
+                if strategyType == "intraday_scalp" or (settings.rules and settings.rules.timeframe == "intraday")
                 else "最近五个交易日分钟数据"
             )
         else:
@@ -134,23 +172,27 @@ def market(
                 "five_day": "最近五个交易日分钟数据",
                 "daily": "日K", "weekly": "周K", "monthly": "月K",
             }.get(timeframe, timeframe)
-        strategy_bars = bars if strategyType == "intraday_scalp" else analysis_bars
+        strategy_bars = bars if strategyType == "intraday_scalp" or (settings.rules and settings.rules.timeframe == "intraday") else analysis_bars
         strategy_bar_status = "completed"
-        if (
+        if settings.rules:
+            strategy_bars, in_progress = completed_custom_bars(strategy_bars, timeframe)
+            strategy_bar_status = "in_progress" if in_progress else "completed"
+        elif (
             timeframe in {"daily", "weekly", "monthly"}
             and metadata.get("marketOpen")
-            and len(analysis_bars) > 1
+            and len(strategy_bars) > 1
         ):
             # Keep the live candle for display, but confirm signals on the last closed candle.
-            strategy_bars = analysis_bars.iloc[:-1].reset_index(drop=True)
+            strategy_bars = strategy_bars.iloc[:-1].reset_index(drop=True)
             strategy_bar_status = "in_progress"
         strategy = analyze_strategy(
-            strategy_bars, strategyType, fastPeriod, slowPeriod, code, timeframe,
+            strategy_bars, strategyType, settings.fastPeriod, settings.slowPeriod, code, timeframe,
+            parameters=settings.parameters, rules=settings.rules,
         )
         strategy["barStatus"] = strategy_bar_status
         if strategy_bar_status == "in_progress" and strategy.get("supported"):
             strategy["message"] = (
-                f"当前{timeframe}K线尚未收盘；正式信号基于 {strategy['asOf'][:10]} 的已完成K线。"
+                f"当前{timeframe}K线尚未收盘；正式信号基于 {(strategy['asOf'] or '未知时间')[:16]} 的已完成K线。"
                 f" {strategy['message']}"
             )
         return {
@@ -167,15 +209,23 @@ def market(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.get("/api/strategies")
-def get_strategies() -> list[dict[str, Any]]:
-    """Load local strategy definitions, creating an empty store on first use."""
+def _read_strategy_store() -> list[dict[str, Any]]:
+    """Read raw saved records so editing one instance leaves other definitions intact."""
     STRATEGIES_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not STRATEGIES_FILE.exists():
         STRATEGIES_FILE.write_text("[]", encoding="utf-8")
-    items = json.loads(STRATEGIES_FILE.read_text(encoding="utf-8"))
-    return items
+    return json.loads(STRATEGIES_FILE.read_text(encoding="utf-8"))
 
+
+@app.get("/api/strategies")
+def get_strategies() -> list[dict[str, Any]]:
+    """Fill legacy defaults in responses without rewriting saved user definitions."""
+    return [
+        ({**item, "rules": normalize_custom_rules(item.get("rules")).model_dump(exclude_none=True)}
+         if item["strategyType"] == "custom" else
+         {**item, "parameters": normalize_strategy_parameters(item["strategyType"], item.get("parameters"))})
+        for item in _read_strategy_store()
+    ]
 
 @app.get("/api/strategy-templates")
 def list_strategy_templates() -> list[dict[str, Any]]:
@@ -183,13 +233,19 @@ def list_strategy_templates() -> list[dict[str, Any]]:
     return get_strategy_templates()
 
 
+@app.get("/api/strategy-rule-options")
+def list_strategy_rule_options() -> dict[str, Any]:
+    """Describe the independent rule editor's supported indicators and comparisons."""
+    return get_rule_options()
+
+
 @app.post("/api/strategies")
 def save_strategy(strategy: StrategyInput) -> dict[str, Any]:
     """Create a versioned research strategy in the local project store."""
-    if strategy.fastPeriod >= strategy.slowPeriod:
-        raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
-    items = get_strategies()
-    item = strategy.model_dump()
+    items = _read_strategy_store()
+    item = strategy.model_dump(exclude_none=True, exclude=(
+        {"fastPeriod", "slowPeriod", "parameters"} if strategy.strategyType == "custom" else {"rules"}
+    ))
     item["id"] = strategy.id or os.urandom(8).hex()
     item["version"] = 1 + max((entry.get("version", 0) for entry in items if entry.get("id") == item["id"]), default=0)
     item["updatedAt"] = pd.Timestamp.now().isoformat(timespec="seconds")
@@ -203,15 +259,15 @@ def save_strategy(strategy: StrategyInput) -> dict[str, Any]:
 def backtest(request: BacktestInput) -> dict[str, Any]:
     """Run the selected strategy against available historical public bars."""
     try:
-        if request.fastPeriod >= request.slowPeriod:
-            raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
         code = normalize_symbol(request.symbol)
-        template = get_strategy_template(request.strategyType)
-        supported_symbols = template["supportedSymbols"]
-        supported_timeframes = template["supportedTimeframes"]
-        if (supported_symbols and code not in supported_symbols) or request.timeframe not in supported_timeframes:
-            raise HTTPException(status_code=422, detail=template["scopeError"])
-        if request.strategyType in {"trend_filter", "swing_breakout"}:
+        if request.rules is not None:
+            if code != request.rules.symbol or request.timeframe != request.rules.timeframe:
+                raise HTTPException(status_code=422, detail="回测标的和周期必须与自定义规则一致")
+        else:
+            template = get_strategy_template(request.strategyType)
+            if code not in template["supportedSymbols"] or request.timeframe not in template["supportedTimeframes"]:
+                raise HTTPException(status_code=422, detail=template["scopeError"])
+        if request.strategyType in {"trend_filter", "swing_breakout"} or (request.rules and request.timeframe == "daily"):
             bars, metadata = fetch_daily_history(code)
         elif request.strategyType == "intraday_scalp":
             if request.timeframe != "intraday":
@@ -222,6 +278,11 @@ def backtest(request: BacktestInput) -> dict[str, Any]:
         result = run_backtest(
             bars, request.initialCapital, request.feeRate, request.slippageBps,
             request.fastPeriod, request.slowPeriod, request.strategyType,
+            parameters=request.parameters, rules=request.rules,
+            session_complete=(
+                (request.strategyType == "intraday_scalp" or (request.rules and request.rules.timeframe == "intraday"))
+                and metadata.get("sessionComplete", False)
+            ),
         )
         result["bars"] = _records(bars)
         return {"symbol": code, "timeframe": request.timeframe, "metadata": metadata, **result}
