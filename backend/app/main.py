@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+from statistics import fmean, pstdev
 import subprocess
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -77,10 +79,21 @@ class AISettings(BaseModel):
         return value
 
 
+class AIBar(BaseModel):
+    datetime: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = Field(ge=0)
+
+
 class AIAnalysisInput(BaseModel):
     symbol: str
     timeframe: str
     analysis: dict[str, Any]
+    strategy: dict[str, Any] | None = None
+    bars: list[AIBar] = Field(default_factory=list, max_length=500)
     sourceTime: str
     analysisBasis: str = ""
 
@@ -106,25 +119,6 @@ def market(
         if fastPeriod >= slowPeriod:
             raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
         code = normalize_symbol(symbol)
-        template = get_strategy_template(strategyType)
-        if strategyType in {"swing_breakout", "intraday_scalp"} and (
-            (template["supportedSymbols"] and code not in template["supportedSymbols"])
-            or timeframe not in template["supportedTimeframes"]
-        ):
-            raise HTTPException(status_code=422, detail=template["scopeError"])
-        if strategyType == "intraday_scalp":
-            timeframe = "intraday"
-            bars, metadata = fetch_bars(code, timeframe)
-            analysis_bars, _ = fetch_bars(code, "five_day")
-            metadata["analysisBasis"] = "当日分钟K线"
-            strategy = analyze_strategy(bars, strategyType, fastPeriod, slowPeriod, code, timeframe)
-            strategy["barStatus"] = "in_progress" if metadata.get("marketOpen") else "completed"
-            if not metadata.get("marketOpen"):
-                strategy["message"] = "当前交易时段已结束；" + strategy["message"]
-            return {
-                "symbol": code, "timeframe": timeframe, "metadata": metadata,
-                "analysis": analyze(analysis_bars), "strategy": strategy, "bars": _records(bars),
-            }
         bars, metadata = fetch_bars(code, timeframe)
         analysis_bars = bars
         if timeframe in {"intraday", "1m"}:
@@ -284,6 +278,8 @@ def analyze_with_ai(request: AIAnalysisInput) -> dict[str, str]:
         "sourceTime": request.sourceTime,
         "analysisBasis": request.analysisBasis,
         "indicatorsAndSignals": request.analysis,
+        "selectedStrategy": request.strategy,
+        "historicalContext": _build_quant_context(request.bars),
         "fieldDefinitions": {
             "changePct": "最新一根K线收盘价相对前一根K线收盘价的涨跌幅百分比。",
             "macd": "TA-Lib MACD 柱值，不是 MACD 线；正值只表示该指标当前为正。",
@@ -294,26 +290,41 @@ def analyze_with_ai(request: AIAnalysisInput) -> dict[str, str]:
             "volumeExpansion": "近5根K线平均成交量是否超过近30根均量的1.25倍。",
             "breakout": "最新收盘价是否高于此前70根K线的最高价。",
             "signal": "仅当 trend、momentum 均为真，且 volumeExpansion 或 breakout 至少一项为真时满足。",
+            "returnsPctByBars": "按5、20、60根当前所选周期K线计算的收盘价收益；样本不足时为null。",
+            "recentRangeByBars.positionPct": "最新收盘价在对应窗口最高价与最低价之间的位置，0接近区间低点，100接近区间高点；不是支撑阻力位。",
+            "recentRangeByBars.drawdownFromHighPct": "最新收盘价相对窗口内最高价的百分比变化，负值表示从高点回撤。",
+            "sma20ChangeVsPrior20Pct": "最近20根收盘均价相对其前一段20根收盘均价的百分比变化。",
+            "realizedVolatilityPct20": "最近20个单根K线收益率标准差乘以根数平方根的波动估算，不是年化值也不表示涨跌方向。",
+            "recentMoveSizeVsPrior15": "最近5根单根绝对收益均值相对之前15根的比值；大于1表示近期单根波动幅度扩大。",
         },
         "task": (
-            "请基于输入做当前行情的量化研究解读。先核对数据时间和周期，再用实际数值解释价格相对均线、MACD柱值、RSI、ATR及量能/突破条件；"
-            "逐项说明规则信号满足与否，并区分指标事实和你的推断。只拿到当前指标快照，不要声称看到了未提供的K线或外部消息；"
-            "不要把规则标签解释成买卖建议，不预测收益或确定的未来方向。"
+            "请像一位熟悉量化研究的分析师，针对这一次数据写一段有重点的中文解读。先独立检查历史上下文，比较短、中、"
+            "长窗口的表现、价格在近期区间的位置、回撤和波动变化，找出至少一条不能从策略标签本身直接读出的观察。"
+            "不要只重述策略方向或列指标，要解释行情处于什么阶段、相对近端走势是延续还是变化。判断哪些证据互相印证、"
+            "哪些相互冲突，再解释这对当前行情状态意味着什么。结合所选策略的 signal、action、"
+            "entryCondition、exitCondition 说明规则为什么处于当前状态；若策略信号与短期反弹、动能或其他指标不一致，"
+            "解释它们观察尺度不同，不要把矛盾抹平。最后给出两三个可验证的观察条件，并说明什么变化会加强或削弱当前判断。"
+            "历史上下文中的收益窗口按K线根数计算，不能自行换算成自然日。区间位置不是支撑阻力预测，波动率也不代表方向。"
+            "避免固定套用标题、重复免责声明、泛泛而谈和机械罗列指标；"
+            "不要给买卖指令、仓位建议、目标价、收益预测或确定性方向判断。"
         ),
-        "outputFormat": (
-            "使用中文纯文本，控制在约250至450字，按以下标题分段：\n"
-            "数据与周期：\n趋势与动能：\n规则信号：\n风险与观察点：\n"
-            "每段先给结论再给数据依据；数值沿用输入精度，不确定或缺失的信息明确说明，不补造。"
+        "responseStyle": (
+            "中文自然表达，通常两到四个短段即可，长短由行情复杂度决定；可以直接使用小标题，但不要每次套用同一组标题。"
+            "引用输入中的具体数值作为依据，区分数据事实、策略规则和分析判断。历史上下文由当前请求所带K线计算，"
+            "窗口用K线根数标示；不要把它改述成天数。没有可用的历史上下文时，不得假称做过多周期比较。"
+            "不要声称看过未提供的盘中路径、新闻或资金流；缺失字段就略过或说明无法判断。"
+            "不要为了显得全面重复所有指标，也不要照抄策略说明。"
         ),
     }
     system_prompt = (
-        "你是严谨的A股与ETF量化研究助理。你的任务是解释给定数据，不替用户下单或做收益承诺。"
-        "将输入字段视为唯一事实来源；明确区分事实、规则判定与推断，不推测缺失数据，不引用外部行情或新闻。"
-        "若数据时间、周期或指标不足以支持结论，直接说明限制。"
+        "你是严谨但表达自然的A股与ETF量化研究助理。先判断这次数据真正重要的变化或矛盾，再围绕它解释，"
+        "不要把每份回答写成相同的指标清单。将输入字段视为唯一事实来源；明确区分行情事实、策略规则判定和你的推断。"
+        "策略 signal/action 是规则输出，不等于投资建议。数据时间、周期或指标不足时简洁说明具体限制，不推测缺失数据，"
+        "不引用外部行情或新闻，不承诺收益或预测确定方向。"
     )
     body = json.dumps({
         "model": settings["model"],
-        "temperature": 0.2,
+        "temperature": 0.55,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
@@ -366,6 +377,63 @@ def _records(bars: pd.DataFrame) -> list[dict[str, Any]]:
     records = bars.copy()
     records["datetime"] = records["datetime"].dt.strftime("%Y-%m-%d %H:%M:%S")
     return records.to_dict(orient="records")
+
+
+def _build_quant_context(bars: list[AIBar]) -> dict[str, Any]:
+    """Summarize multi-horizon structure and risk from the supplied bars."""
+    valid = [
+        bar for bar in bars
+        if all(math.isfinite(value) for value in (bar.open, bar.high, bar.low, bar.close, bar.volume))
+        and min(bar.open, bar.high, bar.low, bar.close) > 0
+        and bar.high >= max(bar.open, bar.close)
+        and bar.low <= min(bar.open, bar.close)
+    ]
+    if len(valid) < 2:
+        return {"barCount": len(valid), "availability": "至少需要两根有效K线"}
+
+    closes = [bar.close for bar in valid]
+    highs = [bar.high for bar in valid]
+    lows = [bar.low for bar in valid]
+    latest = closes[-1]
+    returns: dict[str, float | None] = {}
+    for window in (5, 20, 60):
+        returns[str(window)] = round((latest / closes[-window - 1] - 1) * 100, 2) if len(closes) > window else None
+
+    ranges: dict[str, dict[str, float | None]] = {}
+    for window in (20, 60):
+        if len(closes) < window:
+            ranges[str(window)] = {"positionPct": None, "drawdownFromHighPct": None}
+            continue
+        range_high = max(highs[-window:])
+        range_low = min(lows[-window:])
+        ranges[str(window)] = {
+            "positionPct": round((latest - range_low) / (range_high - range_low) * 100, 1) if range_high > range_low else 50.0,
+            "drawdownFromHighPct": round((latest / range_high - 1) * 100, 2),
+        }
+
+    closes20 = closes[-20:]
+    context: dict[str, Any] = {
+        "barCount": len(valid),
+        "firstBar": valid[0].datetime,
+        "lastBar": valid[-1].datetime,
+        "returnsPctByBars": returns,
+        "recentRangeByBars": ranges,
+        "sma20": round(fmean(closes20), 4) if len(closes) >= 20 else None,
+        "sma60": round(fmean(closes[-60:]), 4) if len(closes) >= 60 else None,
+    }
+    if len(closes) >= 40:
+        prior_sma20 = fmean(closes[-40:-20])
+        context["sma20ChangeVsPrior20Pct"] = round((fmean(closes20) / prior_sma20 - 1) * 100, 2) if prior_sma20 else None
+    bar_returns = [closes[index] / closes[index - 1] - 1 for index in range(1, len(closes))]
+    if len(bar_returns) >= 20:
+        context["realizedVolatilityPct20"] = round(pstdev(bar_returns[-20:]) * math.sqrt(20) * 100, 2)
+        recent = fmean(abs(value) for value in bar_returns[-5:])
+        baseline = fmean(abs(value) for value in bar_returns[-20:-5])
+        context["recentMoveSizeVsPrior15"] = round(recent / baseline, 2) if baseline else None
+    else:
+        context["realizedVolatilityPct20"] = None
+        context["recentMoveSizeVsPrior15"] = None
+    return context
 
 
 def _chat_endpoint(base_url: str) -> str:

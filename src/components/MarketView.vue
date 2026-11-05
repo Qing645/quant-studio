@@ -21,6 +21,11 @@ const props = defineProps<{
   strategySaved: boolean;
   strategyChanged: boolean;
   strategySaving: boolean;
+  aiResult: string;
+  aiError: string;
+  aiBusy: boolean;
+  aiReady: boolean;
+  aiStale: boolean;
 }>();
 const emit = defineEmits<{
   "update:symbol": [value: string];
@@ -28,6 +33,7 @@ const emit = defineEmits<{
   selectStrategy: [id: string];
   saveStrategy: [];
   refresh: [];
+  "analyze-ai": [];
   "navigate-ai": [];
   "navigate-backtest": [];
 }>();
@@ -67,9 +73,24 @@ function updateStrategy(event: Event): void {
   <section class="market-layout">
     <div class="chart-section">
       <div class="section-head"><div><h2>价格结构</h2><span>{{ timeframe === 'intraday' ? "当日分时价格" : isLineTimeframe ? "分钟走势 · SMA20 · SMA60" : "OHLC · SMA20 · SMA60" }}</span></div><div class="legend-inline"><i class="legend-up"></i>上涨 <i class="legend-down"></i>下跌 <span>{{ timeframeLabel }} · {{ isLineTimeframe ? "分钟走势" : "复权K线" }}</span></div></div>
-      <MarketChart v-if="snapshot" :bars="snapshot.bars" :timeframe="timeframe" />
+      <MarketChart v-if="snapshot && snapshot.timeframe === timeframe" :key="timeframe" :bars="snapshot.bars" :timeframe="timeframe" />
       <div v-else class="market-chart"></div>
       <div class="chart-caption"><Database :size="13" /> {{ snapshot ? `${snapshot.metadata.sessionStatus} · ${snapshot.metadata.delayNotice}` : "等待数据" }}</div>
+      <section class="live-ai">
+        <div class="live-ai-heading">
+          <div><h3><Bot :size="14" /> AI 行情解读</h3><span>{{ snapshot ? `${activeStrategy.name || activeTemplate?.label || '当前策略'} · ${snapshot.metadata.sourceTime}` : '等待行情数据' }}</span></div>
+          <button class="subtle-button" :disabled="!snapshot || aiBusy || !aiReady" :title="!aiReady ? '请先在 AI 模型页配置 API Key' : ''" @click="emit('analyze-ai')">
+            <LoaderCircle v-if="aiBusy" :size="13" class="spinning" />
+            <Sparkles v-else :size="13" />
+            {{ aiBusy ? '分析中' : aiResult || aiError ? '重新分析' : '生成分析' }}
+          </button>
+        </div>
+        <p v-if="!aiReady" class="live-ai-hint">请先在 AI 模型页配置并测试模型连接。</p>
+        <p v-else-if="aiBusy" class="live-ai-hint">正在结合所选策略、当前指标与近期 K 线生成分析。</p>
+        <p v-else-if="aiError" class="live-ai-error">{{ aiError }}</p>
+        <p v-else-if="aiResult" class="live-ai-result"><span v-if="aiStale" class="live-ai-stale">行情已更新，以下分析基于上一时点；点击“重新分析”获取最新判断。</span>{{ aiResult }}</p>
+        <p v-else class="live-ai-hint">分析会结合当前行情、策略信号和近期历史数据；切换标的、周期或策略后需重新生成。</p>
+      </section>
     </div>
     <aside class="analysis-panel">
       <div class="section-head"><div><h2>策略判断</h2><span>{{ activeStrategy.name || activeTemplate?.label || '未选择策略' }} · {{ snapshot?.strategy.asOf ? `信号截至 ${snapshot.strategy.asOf.slice(0, 10)}` : snapshot?.metadata.analysisBasis ?? '等待数据' }}<em v-if="snapshot?.strategy.barStatus === 'in_progress'"> · 盘中待收盘确认</em><em v-else-if="snapshot?.strategy.barStatus === 'completed'"> · 收盘确认</em></span></div><span class="signal-tag" :class="snapshot?.strategy.entryCondition ? 'signal-positive' : ''">{{ snapshot?.strategy.signal ?? "等待数据" }}</span></div>
@@ -77,12 +98,12 @@ function updateStrategy(event: Event): void {
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.entryCondition }"><Activity :size="15" /></span><span>{{ activeTemplate?.entryLabel ?? '入场条件' }} <small>{{ activeTemplate?.entryRule.replaceAll('{fastPeriod}', String(activeStrategy.fastPeriod)).replaceAll('{slowPeriod}', String(activeStrategy.slowPeriod)) }}</small></span><b :class="snapshot.strategy.entryCondition ? 'up' : 'muted'">{{ snapshot.strategy.entryCondition ? '触发' : '未触发' }}</b></div>
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.exitCondition }"><ChartCandlestick :size="15" /></span><span>{{ activeTemplate?.exitLabel ?? '退出条件' }} <small>{{ activeTemplate?.exitRule.replaceAll('{fastPeriod}', String(activeStrategy.fastPeriod)).replaceAll('{slowPeriod}', String(activeStrategy.slowPeriod)) }}</small></span><b :class="snapshot.strategy.exitCondition ? 'down' : 'muted'">{{ snapshot.strategy.exitCondition ? '触发' : '未触发' }}</b></div>
       </div>
-      <div v-if="snapshot && !snapshot.strategy.supported" class="assessment"><div class="assessment-title"><Database :size="14" /> 当前周期不适用</div><p>{{ snapshot.strategy.message }}</p></div>
+      <div v-if="snapshot && !snapshot.strategy.supported" class="assessment"><div class="assessment-title"><Database :size="14" /> 实时策略未生效</div><p>当前策略基于{{ activeTemplate?.scopeLabel || '指定行情周期' }}，所选周期为{{ timeframeLabel }}；行情仍正常显示，策略信号不计算。{{ snapshot.strategy.message }}</p></div>
       <div v-else-if="snapshot?.strategy.message" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号说明</div><p>{{ snapshot.strategy.message }}</p></div>
       <div v-if="snapshot" class="metric-grid"><div><span>SMA20</span><b>{{ snapshot.analysis.sma20.toFixed(3) }}</b></div><div><span>SMA60</span><b>{{ snapshot.analysis.sma60.toFixed(3) }}</b></div><div><span>RSI14</span><b :class="snapshot.analysis.rsi14 < 30 ? 'amber' : ''">{{ snapshot.analysis.rsi14.toFixed(1) }}</b></div><div><span>ATR20</span><b>{{ snapshot.analysis.atr20.toFixed(3) }}</b></div></div>
       <div v-if="snapshot?.strategy.regime" class="assessment"><div class="assessment-title"><Activity :size="14" /> 市场状态</div><p>{{ snapshot.strategy.regime === 'bull' ? '牛市趋势：允许按策略持有或分批加仓。' : snapshot.strategy.regime === 'rebound_watch' ? '反弹观察：价格出现修复，但尚未完成大周期趋势确认。' : snapshot.strategy.regime === 'bear' ? '熊市趋势：优先控制仓位，避免把单日反弹当作反转。' : '趋势状态暂不可用。' }}</p></div>
       <div v-if="snapshot" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号依据</div><p>{{ snapshot.analysis.assessment }}</p></div>
-      <button class="text-action" @click="emit('navigate-ai')"><Bot :size="15" /> 让 AI 解读当前数据 <span>→</span></button>
+      <button class="text-action" @click="emit('navigate-ai')"><Bot :size="15" /> AI 模型设置 <span>→</span></button>
     </aside>
   </section>
 

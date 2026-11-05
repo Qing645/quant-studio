@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from app.market import _exchange_prefix, _minute_rows, _quote, analyze, fetch_bars, fetch_daily_history, is_market_open, normalize_symbol
-from app.main import AISettings, BacktestInput, StrategyInput, _format_upstream_error, app, backtest as backtest_endpoint, list_strategy_templates, market as market_endpoint
+from app.main import AIBar, AISettings, BacktestInput, StrategyInput, _build_quant_context, _format_upstream_error, app, backtest as backtest_endpoint, list_strategy_templates, market as market_endpoint
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -30,6 +30,40 @@ class MarketAdapterTest(unittest.TestCase):
             AISettings(baseUrl="http://model.example/v1", model="model-a", apiKey="")
         local_settings = AISettings(baseUrl="http://127.0.0.1:8000/v1", model="local", apiKey="")
         self.assertTrue(local_settings.baseUrl.startswith("http://127.0.0.1"))
+
+    def test_ai_context_adds_historical_observations_beyond_strategy_signal(self) -> None:
+        bars = [
+            AIBar(
+                datetime=f"2025-01-{index:02d}",
+                open=100 + index,
+                high=101 + index,
+                low=99 + index,
+                close=100 + index,
+                volume=1000,
+            )
+            for index in range(1, 101)
+        ]
+
+        context = _build_quant_context(bars)
+
+        self.assertEqual(context["returnsPctByBars"]["5"], 2.56)
+        self.assertGreater(context["returnsPctByBars"]["20"], context["returnsPctByBars"]["5"])
+        self.assertGreater(context["recentRangeByBars"]["20"]["positionPct"], 90)
+        self.assertIn("realizedVolatilityPct20", context)
+        self.assertIn("recentMoveSizeVsPrior15", context)
+
+    def test_ai_context_marks_short_samples_unavailable_instead_of_inventing_metrics(self) -> None:
+        bars = [
+            AIBar(datetime=f"2025-01-0{index}", open=10 + index, high=11 + index,
+                  low=9 + index, close=10 + index, volume=100)
+            for index in range(1, 4)
+        ]
+
+        context = _build_quant_context(bars)
+
+        self.assertIsNone(context["returnsPctByBars"]["5"])
+        self.assertIsNone(context["recentRangeByBars"]["20"]["positionPct"])
+        self.assertIsNone(context["realizedVolatilityPct20"])
 
     def test_cors_allows_local_vite_port_but_rejects_remote_origin(self) -> None:
         middleware = next(item for item in app.user_middleware if item.cls.__name__ == "CORSMiddleware")
@@ -83,6 +117,30 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(result["strategy"]["barStatus"], "in_progress")
         self.assertEqual(result["strategy"]["asOf"], bars.iloc[-2]["datetime"].isoformat())
         self.assertIn("尚未收盘", result["strategy"]["message"])
+
+    def test_market_returns_bars_when_strategy_does_not_support_selected_timeframe(self) -> None:
+        """Keep market browsing available and mark unsupported strategy scopes explicitly."""
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2025-01-01", periods=240, freq="D"),
+            "open": np.full(240, 10.0), "high": np.full(240, 10.2),
+            "low": np.full(240, 9.8), "close": np.linspace(10, 11, 240),
+            "volume": np.full(240, 1000.0),
+        })
+        metadata = {
+            "source": "fixture", "sourceTime": "2025-08-28 15:00:00",
+            "exchange": "SZ", "marketOpen": False,
+        }
+        with patch("app.main.fetch_bars", return_value=(bars, metadata)) as fetch:
+            result = market_endpoint(
+                symbol="159977", timeframe="weekly", strategyType="trend_filter",
+                fastPeriod=20, slowPeriod=60,
+            )
+
+        fetch.assert_called_once_with("159977", "weekly")
+        self.assertEqual(result["timeframe"], "weekly")
+        self.assertEqual(len(result["bars"]), len(bars))
+        self.assertFalse(result["strategy"]["supported"])
+        self.assertIn("日K", result["strategy"]["message"])
 
     def test_removed_strategies_are_rejected_by_api_contract(self) -> None:
         with self.assertRaises(ValidationError):

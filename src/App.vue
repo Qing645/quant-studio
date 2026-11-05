@@ -76,8 +76,14 @@ const aiSettings = reactive<AISettings>({
 const aiResult = ref("");
 const aiBusy = ref(false);
 const aiMessage = ref("");
+const liveAIResult = ref("");
+const liveAIResultSourceTime = ref("");
+const liveAIError = ref("");
+const liveAIBusy = ref(false);
+let liveAIRequestId = 0;
 let refreshTimer: number | undefined;
 let refreshQueued = false;
+let marketRequestId = 0;
 
 const pageTitle = computed(
   () =>
@@ -121,6 +127,18 @@ const selectedExchange = computed(() => {
 const freshness = computed(() =>
   snapshot.value?.metadata.sampled ? "分钟级公开行情" : "复权K线"
 );
+const liveAIContext = computed(() => JSON.stringify([
+  symbol.value.trim().toUpperCase(),
+  timeframe.value,
+  activeStrategy.strategyType,
+  activeStrategy.fastPeriod,
+  activeStrategy.slowPeriod
+]));
+const liveAIStale = computed(() => Boolean(
+  liveAIResult.value &&
+  snapshot.value &&
+  liveAIResultSourceTime.value !== snapshot.value.metadata.sourceTime
+));
 
 /** Load the selected symbol and queue one refresh if a request is already running. */
 async function loadMarket(): Promise<void> {
@@ -129,6 +147,8 @@ async function loadMarket(): Promise<void> {
     return;
   }
   loading.value = true;
+  const requestId = ++marketRequestId;
+  const requestedTimeframe = timeframe.value;
   error.value = "";
   const strategyQuery = new URLSearchParams({
     strategyType: activeStrategy.strategyType,
@@ -145,15 +165,20 @@ async function loadMarket(): Promise<void> {
     backtestResult.value = null;
   }
   try {
-    snapshot.value = await api<MarketSnapshot>(
-      `/api/market?symbol=${encodeURIComponent(symbol.value)}&timeframe=${timeframe.value}&${strategyQuery}`
+    const result = await api<MarketSnapshot>(
+      `/api/market?symbol=${encodeURIComponent(symbol.value)}&timeframe=${requestedTimeframe}&${strategyQuery}`
     );
-    marketStale.value = false;
-    apiReady.value = true;
+    if (requestId === marketRequestId && requestedTimeframe === timeframe.value) {
+      snapshot.value = result;
+      marketStale.value = false;
+      apiReady.value = true;
+    }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "行情读取失败";
-    marketStale.value = Boolean(snapshot.value);
-    apiReady.value = true;
+    if (requestId === marketRequestId) {
+      error.value = cause instanceof Error ? cause.message : "行情读取失败";
+      marketStale.value = Boolean(snapshot.value);
+      apiReady.value = true;
+    }
   } finally {
     loading.value = false;
     if (refreshQueued) {
@@ -213,7 +238,7 @@ function strategyDefinition(strategy: Strategy): string {
   ]);
 }
 
-/** Preserve the selected market unless the calculation method cannot support it. */
+/** Keep the selected market aligned while leaving timeframe choice to the user. */
 function alignStrategyScope(template: StrategyTemplate): void {
   const code = symbol.value
     .trim()
@@ -224,10 +249,6 @@ function alignStrategyScope(template: StrategyTemplate): void {
     !template.supportedSymbols.includes(code)
   )
     symbol.value = template.defaultSymbol;
-  if (!template.supportedTimeframes.includes(timeframe.value))
-    timeframe.value = template.defaultTimeframe;
-  if (template.strategyType === "intraday_scalp") timeframe.value = "intraday";
-  if (template.strategyType === "swing_breakout") timeframe.value = "daily";
 }
 
 /** Create a draft only through the explicit new-strategy action. */
@@ -372,7 +393,9 @@ async function askAI(): Promise<void> {
         timeframe: timeframe.value,
         sourceTime: snapshot.value.metadata.sourceTime,
         analysisBasis: snapshot.value.metadata.analysisBasis,
-        analysis: snapshot.value.analysis
+        analysis: snapshot.value.analysis,
+        strategy: snapshot.value.strategy,
+        bars: snapshot.value.bars.slice(-500)
       })
     });
     aiResult.value = result.analysis;
@@ -383,6 +406,49 @@ async function askAI(): Promise<void> {
   }
 }
 
+/** Analyze the displayed live snapshot and discard replies for an older context. */
+async function analyzeLiveMarket(): Promise<void> {
+  const current = snapshot.value;
+  if (!current || liveAIBusy.value) return;
+  const requestId = ++liveAIRequestId;
+  const context = liveAIContext.value;
+  liveAIBusy.value = true;
+  liveAIResult.value = "";
+  liveAIError.value = "";
+  try {
+    const result = await api<{ analysis: string }>("/api/ai/analyze", {
+      method: "POST",
+      body: JSON.stringify({
+        symbol: current.symbol,
+        timeframe: timeframe.value,
+        sourceTime: current.metadata.sourceTime,
+        analysisBasis: current.metadata.analysisBasis,
+        analysis: current.analysis,
+        strategy: current.strategy,
+        bars: current.bars.slice(-500)
+      })
+    });
+    if (requestId === liveAIRequestId && context === liveAIContext.value) {
+      liveAIResult.value = result.analysis;
+      liveAIResultSourceTime.value = current.metadata.sourceTime;
+    }
+  } catch (cause) {
+    if (requestId === liveAIRequestId && context === liveAIContext.value) {
+      liveAIError.value = cause instanceof Error ? cause.message : "AI 分析失败";
+    }
+  } finally {
+    if (requestId === liveAIRequestId) liveAIBusy.value = false;
+  }
+}
+
+watch(liveAIContext, () => {
+  liveAIRequestId += 1;
+  liveAIResult.value = "";
+  liveAIResultSourceTime.value = "";
+  liveAIError.value = "";
+  liveAIBusy.value = false;
+}, { flush: "sync" });
+
 watch(
   backtestContext,
   () => {
@@ -390,11 +456,10 @@ watch(
   },
   { flush: "sync" }
 );
-watch(timeframe, (selectedTimeframe) => {
-  if (activeTemplate.value && !activeTemplate.value.supportedTimeframes.includes(selectedTimeframe)) {
-    timeframe.value = activeTemplate.value.defaultTimeframe;
-    return;
-  }
+watch(timeframe, () => {
+  marketRequestId += 1;
+  snapshot.value = null;
+  marketStale.value = false;
   aiResult.value = "";
   backtestResult.value = null;
   void loadMarket();
@@ -520,11 +585,17 @@ onUnmounted(() => {
           :strategy-saved="Boolean(strategies.find((item) => item.id === activeStrategy.id))"
           :strategy-changed="strategyChanged"
           :strategy-saving="strategySaving"
+          :ai-result="liveAIResult"
+          :ai-error="liveAIError"
+          :ai-busy="liveAIBusy"
+          :ai-ready="aiSettings.hasApiKey"
+          :ai-stale="liveAIStale"
           @update:symbol="symbol = $event"
           @update:timeframe="timeframe = $event"
           @select-strategy="selectLiveStrategy"
           @save-strategy="saveStrategy"
           @refresh="loadMarket"
+          @analyze-ai="analyzeLiveMarket"
           @navigate-ai="activeView = 'ai'"
           @navigate-backtest="activeView = 'backtest'"
         />
