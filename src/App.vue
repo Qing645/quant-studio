@@ -20,7 +20,6 @@ import type {
   MarketSnapshot,
   Strategy,
   StrategyTemplate,
-  StrategyType,
   Timeframe,
   TimeframeOption,
   View
@@ -29,7 +28,6 @@ import type {
 const activeView = ref<View>("market");
 const timeframe = ref<Timeframe>("daily");
 const symbol = ref("159977");
-const mlSymbols = ref("159977");
 const timeframeOptions: TimeframeOption[] = [
   { value: "intraday", label: "分时" },
   { value: "five_day", label: "五日" },
@@ -98,14 +96,7 @@ const activeTemplate = computed(() =>
 const strategyTypeLabel = computed(() => activeTemplate.value?.label ?? "");
 const backtestRequest = computed(() => ({
   symbol: symbol.value,
-  symbols:
-    activeStrategy.strategyType === "ml_direction"
-      ? mlSymbols.value
-          .split(",")
-          .map((item) => item.trim())
-          .filter(Boolean)
-      : [],
-  timeframe: timeframe.value,
+  timeframe: activeStrategy.strategyType === "intraday_scalp" ? "intraday" : activeStrategy.strategyType === "swing_breakout" ? "daily" : timeframe.value,
   strategyType: activeStrategy.strategyType,
   ...backtestForm,
   fastPeriod: activeStrategy.fastPeriod,
@@ -235,6 +226,8 @@ function alignStrategyScope(template: StrategyTemplate): void {
     symbol.value = template.defaultSymbol;
   if (!template.supportedTimeframes.includes(timeframe.value))
     timeframe.value = template.defaultTimeframe;
+  if (template.strategyType === "intraday_scalp") timeframe.value = "intraday";
+  if (template.strategyType === "swing_breakout") timeframe.value = "daily";
 }
 
 /** Create a draft only through the explicit new-strategy action. */
@@ -286,32 +279,6 @@ async function saveStrategy(): Promise<void> {
   }
 }
 
-/** Align a draft with the selected template's supported scope. */
-function selectStrategyType(strategyType: StrategyType): void {
-  if (strategySaving.value || strategyType === activeStrategy.strategyType)
-    return;
-  const previous = strategyTemplates.value.find(
-    (item) => item.strategyType === activeStrategy.strategyType
-  );
-  const next = strategyTemplates.value.find(
-    (item) => item.strategyType === strategyType
-  );
-  if (!next) return;
-  backtestResult.value = null;
-  const useTemplateName =
-    !activeStrategy.id &&
-    (!activeStrategy.name || activeStrategy.name === previous?.templateName);
-  const useTemplateDescription =
-    !activeStrategy.description ||
-    activeStrategy.description === previous?.description;
-  activeStrategy.strategyType = strategyType;
-  if (useTemplateName) activeStrategy.name = next.templateName;
-  if (useTemplateDescription) activeStrategy.description = next.description;
-  activeStrategy.fastPeriod = next.defaultFastPeriod;
-  activeStrategy.slowPeriod = next.defaultSlowPeriod;
-  alignStrategyScope(next);
-}
-
 /** Copy a saved strategy into the editor for review or modification. */
 function selectStrategy(strategy: Strategy): void {
   if (strategySaving.value) return;
@@ -322,6 +289,7 @@ function selectStrategy(strategy: Strategy): void {
   );
   if (template) alignStrategyScope(template);
   activeStrategy.strategyType = strategy.strategyType;
+  void loadMarket();
 }
 
 /** Run the selected rule set with the current fee and slippage inputs. */
@@ -422,7 +390,11 @@ watch(
   },
   { flush: "sync" }
 );
-watch(timeframe, () => {
+watch(timeframe, (selectedTimeframe) => {
+  if (activeTemplate.value && !activeTemplate.value.supportedTimeframes.includes(selectedTimeframe)) {
+    timeframe.value = activeTemplate.value.defaultTimeframe;
+    return;
+  }
   aiResult.value = "";
   backtestResult.value = null;
   void loadMarket();
@@ -568,7 +540,6 @@ onUnmounted(() => {
           :changed="strategyChanged"
           @new-strategy="startNewStrategy"
           @select-strategy="selectStrategy"
-          @select-type="selectStrategyType"
           @save="saveStrategy"
           @reload="loadStrategyWorkspace"
           @navigate-backtest="activeView = 'backtest'"
@@ -578,13 +549,11 @@ onUnmounted(() => {
           :strategy-name="activeStrategy.name"
           :strategy-type="activeStrategy.strategyType"
           :symbol="symbol"
-          :symbols="mlSymbols"
           :timeframe-label="timeframeLabel"
           :loading="loading"
           :form="backtestForm"
           :result="backtestResult"
           :source-time="snapshot?.metadata.sourceTime"
-          @update:symbols="mlSymbols = $event"
           @run="runBacktest"
           @navigate-strategy="activeView = 'strategy'"
         />

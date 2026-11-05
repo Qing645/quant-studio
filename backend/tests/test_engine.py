@@ -1,12 +1,9 @@
-from datetime import datetime, timedelta
 import unittest
 
 import numpy as np
 import pandas as pd
 import talib
-
-from app.engine import _annualizer, _rolling_performance, analyze_strategy, run_backtest, run_ml_portfolio
-from app.ml import _features, walk_forward_probabilities
+from app.engine import _annualizer, _rolling_performance, analyze_strategy, run_backtest
 
 
 class BacktestTimingTest(unittest.TestCase):
@@ -22,6 +19,7 @@ class BacktestTimingTest(unittest.TestCase):
             "datetime": pd.date_range("2025-01-01", periods=100, freq="D"),
             "open": np.ones(100), "high": np.ones(100),
             "low": np.ones(100), "close": np.ones(100),
+            "volume": np.ones(100),
         })
         with self.assertRaisesRegex(ValueError, "快线 < 慢线"):
             run_backtest(bars, 100_000, 0, 0, 20, 20)
@@ -72,49 +70,29 @@ class BacktestTimingTest(unittest.TestCase):
         self.assertFalse(wrong_timeframe["supported"])
         self.assertIn("仅支持", wrong_timeframe["message"])
 
-    def test_live_ml_strategy_reports_insufficient_training_history(self) -> None:
-        """Report training limitations as signal state rather than failing the market request."""
-        close = np.linspace(20, 30, 120)
+    def test_intraday_strategy_closes_at_sample_end_without_overnight_position(self) -> None:
+        """Keep minute strategy positions flat at the end of the available session sample."""
+        close = 10 + np.sin(np.arange(180) / 8) * 0.08 + np.arange(180) * 0.001
         bars = pd.DataFrame({
-            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": close - 0.2,
+            "datetime": pd.date_range("2026-11-02 09:30", periods=len(close), freq="min"),
+            "open": close, "high": close + 0.02, "low": close - 0.02,
             "close": close, "volume": np.full(len(close), 1000.0),
         })
 
-        result = analyze_strategy(bars, "ml_direction", 20, 60, "159977", "daily")
+        result = run_backtest(bars, 100_000, 0.0003, 5, 5, 20, "intraday_scalp")
 
-        self.assertTrue(result["supported"])
-        self.assertEqual(result["signal"], "数据不足")
-        self.assertTrue(result["message"])
+        self.assertFalse(result["openPosition"])
+        self.assertIsNone(result["annualizedReturnPct"])
+        self.assertIsNone(result["sharpe"])
+        self.assertIn("当日分钟样本", result["sampleWarning"])
+        self.assertTrue(all(trade["exit"][:10] == trade["entry"][:10] for trade in result["trades"]))
 
-    def test_growth_momentum_entry_executes_on_the_following_bar_open(self) -> None:
-        close = 20 + np.arange(400) * 0.015 + 0.5 * np.sin(np.arange(400) / 7)
-        bars = pd.DataFrame({
-            "datetime": [datetime(2025, 1, 1) + timedelta(days=i) for i in range(len(close))],
-            "open": close + 0.1,
-            "high": close + 0.2,
-            "low": close - 0.2,
-            "close": close,
-            "volume": np.full(len(close), 1000.0),
-        })
-        fast = talib.SMA(close.astype(float), timeperiod=20)
-        slow = talib.SMA(close.astype(float), timeperiod=60)
-        histogram = talib.MACD(close.astype(float), fastperiod=12, slowperiod=26, signalperiod=9)[2]
-        rsi = talib.RSI(close.astype(float), timeperiod=14)
-        entry_indexes = [
-            index for index in range(1, len(close))
-            if histogram[index - 1] <= 0 < histogram[index]
-            and fast[index] > slow[index]
-            and close[index] > slow[index]
-            and 50 <= rsi[index] <= 75
-        ]
+    def test_swing_breakout_live_signal_requires_daily_scope(self) -> None:
+        """Keep the daily swing rule distinct from minute analysis."""
+        result = analyze_strategy(pd.DataFrame(), "swing_breakout", 10, 20, "159977", "intraday")
 
-        result = run_backtest(bars, 100_000, 0, 0, 20, 60, "growth_momentum")
-
-        self.assertTrue(entry_indexes)
-        self.assertTrue(result["trades"])
-        self.assertEqual(result["trades"][0]["entry"], bars.iloc[entry_indexes[0] + 1]["datetime"].isoformat())
-        self.assertEqual(result["strategyType"], "growth_momentum")
+        self.assertFalse(result["supported"])
+        self.assertIn("日K", result["message"])
 
     def test_trend_filter_enters_above_long_sma_and_exits_below_it(self) -> None:
         """Execute trend state changes on the following bar open."""
@@ -154,11 +132,12 @@ class BacktestTimingTest(unittest.TestCase):
         """Size entries from completed bars and preserve unused capital as cash."""
         rng = np.random.default_rng(101)
         close = np.cumprod(1 + rng.normal(0.0008, 0.025, 500))
+        open_price = close * (1 + rng.normal(0, 0.001, len(close)))
         bars = pd.DataFrame({
             "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-            "open": close * (1 + rng.normal(0, 0.001, len(close))),
-            "high": close * 1.01,
-            "low": close * 0.99,
+            "open": open_price,
+            "high": np.maximum(open_price, close) * 1.01,
+            "low": np.minimum(open_price, close) * 0.99,
             "close": close,
             "volume": np.full(len(close), 1000.0),
         })
@@ -187,8 +166,8 @@ class BacktestTimingTest(unittest.TestCase):
         bars = pd.DataFrame({
             "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
             "open": open_price,
-            "high": close * 1.01,
-            "low": close * 0.99,
+            "high": np.maximum(open_price, close) * 1.01,
+            "low": np.minimum(open_price, close) * 0.99,
             "close": close,
             "volume": np.full(len(close), 1000.0),
         })
@@ -201,6 +180,23 @@ class BacktestTimingTest(unittest.TestCase):
         expected_returns = returns[comparison_start - 1:]
         expected_sharpe = np.sqrt(252) * expected_returns.mean() / expected_returns.std()
         self.assertAlmostEqual(result["sharpe"], expected_sharpe)
+
+    def test_trend_filter_annualizes_over_the_full_equity_curve(self) -> None:
+        """Count cash warmup bars because initial capital is present from bar one."""
+        close = np.linspace(20, 25, 100)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
+            "open": close, "high": close + 0.2, "low": close - 0.2,
+            "close": close, "volume": np.full(100, 1000.0),
+        })
+
+        result = run_backtest(bars, 100_000, 0, 0, 20, 60, "trend_filter")
+
+        expected = (
+            (result["finalEquity"] / result["initialCapital"])
+            ** (252 / (len(bars) - 1)) - 1
+        ) * 100
+        self.assertAlmostEqual(result["annualizedReturnPct"], expected)
 
     def test_annualizer_matches_minute_daily_weekly_and_monthly_bars(self) -> None:
         self.assertEqual(_annualizer(1), 252 * 240)
@@ -227,106 +223,15 @@ class BacktestTimingTest(unittest.TestCase):
         self.assertGreaterEqual(result[0]["exposurePct"], 0)
         self.assertEqual(sum(period["transactionCost"] for period in result), 6)
 
-    def test_ml_strategy_reports_held_out_metrics_and_backtest_curve(self) -> None:
-        rng = np.random.default_rng(17)
-        close = 30 + np.cumsum(rng.normal(0, 0.45, 320))
+    def test_backtest_rejects_invalid_ohlcv_rows(self) -> None:
         bars = pd.DataFrame({
-            "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-            "open": close + rng.normal(0, 0.08, len(close)),
-            "high": close + 0.2,
-            "low": close - 0.2,
-            "close": close,
-            "volume": rng.integers(1000, 5000, len(close)),
+            "datetime": pd.date_range("2025-01-01", periods=3, freq="D"),
+            "open": [10.0, 10.0, 10.0], "high": [10.2, 9.8, 10.2],
+            "low": [9.8, 9.9, 9.8], "close": [10.0, 10.0, 10.0],
+            "volume": [1000.0, 1000.0, 1000.0],
         })
-
-        result = run_backtest(bars, 100_000, 0.0003, 5, 20, 60, "ml_direction")
-
-        self.assertEqual(len(result["equityCurve"]), len(bars))
-        self.assertEqual(result["strategyType"], "ml_direction")
-        self.assertGreater(result["machineLearning"]["outOfSampleSamples"], 0)
-        self.assertGreaterEqual(result["machineLearning"]["brierScore"], 0)
-        self.assertLessEqual(result["machineLearning"]["brierScore"], 1)
-
-    def test_ml_walk_forward_does_not_use_bars_after_prediction_window(self) -> None:
-        rng = np.random.default_rng(23)
-        close = 30 + np.cumsum(rng.normal(0, 0.4, 280))
-        bars = pd.DataFrame({
-            "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": close - 0.2,
-            "close": close, "volume": rng.integers(1000, 4000, len(close)),
-        })
-        altered = bars.copy()
-        altered.loc[230:, ["open", "high", "low", "close"]] *= 1.4
-
-        original_probabilities, _ = walk_forward_probabilities(bars)
-        altered_probabilities, _ = walk_forward_probabilities(altered)
-
-        np.testing.assert_allclose(original_probabilities[:230], altered_probabilities[:230], equal_nan=True)
-
-    def test_ml_strategy_rejects_insufficient_daily_history(self) -> None:
-        close = np.linspace(20, 30, 120)
-        bars = pd.DataFrame({
-            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": close - 0.2,
-            "close": close, "volume": np.full(len(close), 1000.0),
-        })
-
-        with self.assertRaisesRegex(ValueError, "样本不足"):
-            run_backtest(bars, 100_000, 0, 0, 20, 60, "ml_direction")
-
-    def test_ml_features_never_emit_infinite_ratios_for_zero_prices(self) -> None:
-        close = 25 + np.sin(np.arange(220) / 8)
-        close[91] = 0
-        bars = pd.DataFrame({
-            "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": np.maximum(close - 0.2, 0),
-            "close": close, "volume": np.full(len(close), 1000.0),
-        })
-
-        features, _ = _features(bars)
-
-        self.assertFalse(np.isinf(features).any())
-        self.assertTrue(np.isnan(features).any())
-
-    def test_ml_portfolio_allocates_equal_capital_and_builds_buy_hold_benchmark(self) -> None:
-        rng = np.random.default_rng(31)
-        bars_by_symbol = {}
-        for symbol, offset in (("159977", 0.0), ("510300", 0.03)):
-            close = 20 + offset + np.cumsum(rng.normal(0, 0.3, 300))
-            bars_by_symbol[symbol] = pd.DataFrame({
-                "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-                "open": close, "high": close + 0.2, "low": close - 0.2,
-                "close": close, "volume": rng.integers(1000, 4000, len(close)),
-            })
-
-        result = run_ml_portfolio(bars_by_symbol, 100_000, 0.0003, 5, 20, 60)
-
-        self.assertEqual(result["symbols"], ["159977", "510300"])
-        self.assertEqual([item["initialCapital"] for item in result["symbolResults"]], [50_000, 50_000])
-        self.assertEqual(len(result["equityCurve"]), 300)
-        self.assertIn("totalReturnPct", result["benchmark"])
-        self.assertEqual(result["excludedSymbols"], [])
-        self.assertEqual(len(result["rollingPerformance"]), 4)
-        self.assertTrue(all("transactionCost" in period for period in result["rollingPerformance"]))
-        self.assertTrue(all("symbol" in trade for trade in result["trades"]))
-        self.assertTrue(all("entryPrice" in trade and "exitPrice" in trade for trade in result["trades"]))
-
-    def test_ml_portfolio_excludes_symbols_without_training_history(self) -> None:
-        rng = np.random.default_rng(33)
-        close = 20 + np.cumsum(rng.normal(0, 0.3, 300))
-        valid = pd.DataFrame({
-            "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": close - 0.2,
-            "close": close, "volume": rng.integers(1000, 4000, len(close)),
-        })
-        short = valid.iloc[:120].copy()
-
-        result = run_ml_portfolio({"159977": valid, "000001": short}, 100_000, 0, 0, 20, 60)
-
-        self.assertEqual(result["symbols"], ["159977"])
-        self.assertEqual(result["excludedSymbols"][0]["symbol"], "000001")
-        self.assertIn("有效日线样本不足", result["excludedSymbols"][0]["reason"])
-        self.assertEqual(result["symbolResults"][0]["initialCapital"], 100_000)
+        with self.assertRaisesRegex(ValueError, "最高价和最低价"):
+            run_backtest(bars, 100_000, 0, 0, 2, 3, "trend_filter")
 
 
 if __name__ == "__main__":

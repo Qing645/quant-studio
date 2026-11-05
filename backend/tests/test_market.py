@@ -39,10 +39,10 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertTrue(origin_pattern.fullmatch("http://localhost:5174"))
         self.assertFalse(origin_pattern.fullmatch("https://example.com"))
 
-    def test_strategy_payload_defaults_to_ml_type(self) -> None:
+    def test_strategy_payload_defaults_to_trend_filter(self) -> None:
         strategy = StrategyInput(name="已有策略")
-        self.assertEqual(strategy.strategyType, "ml_direction")
-        self.assertEqual(BacktestInput().strategyType, "ml_direction")
+        self.assertEqual(strategy.strategyType, "trend_filter")
+        self.assertEqual(BacktestInput().strategyType, "trend_filter")
 
     def test_removed_strategy_is_rejected_by_save_and_backtest_inputs(self) -> None:
         """Reject old clients instead of silently mapping them to another model."""
@@ -55,16 +55,12 @@ class MarketAdapterTest(unittest.TestCase):
         templates = list_strategy_templates()
         by_type = {item["strategyType"]: item for item in templates}
 
-        self.assertNotIn("dual_ma", by_type)
-        self.assertIn("entryRule", by_type["ml_direction"])
-        self.assertEqual(by_type["growth_momentum"]["templateName"], "159977 创业板 ETF 趋势动量")
-        self.assertEqual(by_type["growth_momentum"]["supportedSymbols"], ["159977"])
-        self.assertEqual(by_type["growth_momentum"]["supportedTimeframes"], ["daily"])
-        self.assertEqual(by_type["ml_direction"]["supportedSymbols"], [])
-        self.assertEqual(by_type["ml_direction"]["supportedTimeframes"], ["daily"])
+        self.assertEqual(set(by_type), {"trend_filter", "swing_breakout", "intraday_scalp"})
         self.assertEqual(by_type["trend_filter"]["defaultSlowPeriod"], 60)
         self.assertEqual(by_type["trend_filter"]["supportedSymbols"], ["159915", "159977", "159952", "159957", "159948"])
         self.assertEqual(by_type["trend_filter"]["supportedTimeframes"], ["daily"])
+        self.assertEqual(by_type["swing_breakout"]["supportedTimeframes"], ["daily"])
+        self.assertEqual(by_type["intraday_scalp"]["supportedTimeframes"], ["intraday"])
 
     def test_market_confirms_strategy_on_last_closed_bar_during_session(self) -> None:
         """Keep an in-progress daily candle visible without using it for the signal."""
@@ -88,11 +84,16 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(result["strategy"]["asOf"], bars.iloc[-2]["datetime"].isoformat())
         self.assertIn("尚未收盘", result["strategy"]["message"])
 
-    def test_ml_strategy_accepts_multiple_symbols_and_caps_pool_size(self) -> None:
-        request = BacktestInput(strategyType="ml_direction", symbols=["159977", "510300", "000001"])
-        self.assertEqual(request.symbols, ["159977", "510300", "000001"])
+    def test_removed_strategies_are_rejected_by_api_contract(self) -> None:
         with self.assertRaises(ValidationError):
-            BacktestInput(strategyType="ml_direction", symbols=[f"00000{index}" for index in range(11)])
+            StrategyInput(name="retired", strategyType="growth_momentum")
+        with self.assertRaises(ValidationError):
+            BacktestInput(strategyType="ml_direction")
+
+    def test_market_rejects_unknown_timeframe_as_validation_error(self) -> None:
+        with self.assertRaises(HTTPException) as captured:
+            market_endpoint(timeframe="nonsense")
+        self.assertEqual(captured.exception.status_code, 422)
 
     def test_long_history_parser_uses_adjusted_daily_ohlcv_fields(self) -> None:
         payload = {
@@ -154,51 +155,12 @@ class MarketAdapterTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "东方财富.*Yahoo Finance"):
                 fetch_daily_history("159977")
 
-    def test_ml_strategy_rejects_other_symbol_or_timeframe(self) -> None:
-        request = BacktestInput(symbol="000001", timeframe="weekly", strategyType="ml_direction")
+    def test_intraday_strategy_rejects_other_symbol_or_timeframe(self) -> None:
+        request = BacktestInput(symbol="000001", timeframe="weekly", strategyType="intraday_scalp")
         with self.assertRaises(HTTPException) as captured:
             backtest_endpoint(request)
         self.assertEqual(captured.exception.status_code, 422)
-        self.assertIn("仅支持日K", captured.exception.detail)
-
-    def test_ml_strategy_reports_insufficient_history_as_client_error(self) -> None:
-        close = np.linspace(20, 30, 120)
-        bars = pd.DataFrame({
-            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
-            "open": close, "high": close + 0.2, "low": close - 0.2,
-            "close": close, "volume": np.full(len(close), 1000.0),
-        })
-        with patch("app.main.fetch_daily_history", return_value=(bars, {})):
-            with self.assertRaises(HTTPException) as captured:
-                backtest_endpoint(BacktestInput(strategyType="ml_direction"))
-        self.assertEqual(captured.exception.status_code, 422)
-        self.assertIn("至少需要约 160 根有效K线", captured.exception.detail)
-
-    def test_ml_portfolio_endpoint_returns_equal_weight_results(self) -> None:
-        rng = np.random.default_rng(41)
-        bars_by_symbol = {}
-        for symbol in ("159977", "510300"):
-            close = 20 + np.cumsum(rng.normal(0, 0.3, 300))
-            bars_by_symbol[symbol] = pd.DataFrame({
-                "datetime": pd.date_range("2024-01-01", periods=len(close), freq="D"),
-                "open": close, "high": close + 0.2, "low": close - 0.2,
-                "close": close, "volume": rng.integers(1000, 4000, len(close)),
-            })
-        with patch("app.main.fetch_daily_history", side_effect=lambda code: (bars_by_symbol[code], {})):
-            result = backtest_endpoint(BacktestInput(
-                strategyType="ml_direction", symbols=["159977", "510300"],
-            ))
-        self.assertEqual(result["symbols"], ["159977", "510300"])
-        self.assertEqual([item["initialCapital"] for item in result["symbolResults"]], [50_000, 50_000])
-        self.assertEqual(result["timeframe"], "daily")
-        self.assertIn("benchmark", result)
-        self.assertEqual(len(result["rollingPerformance"]), 4)
-        self.assertTrue(all("transactionCost" in period for period in result["rollingPerformance"]))
-        self.assertTrue(all("entryPrice" in trade and "exitPrice" in trade for trade in result["trades"]))
-        self.assertTrue(all("symbol" in position for position in result["openPositions"]))
-        self.assertEqual(set(result["symbolBars"]), {"159977", "510300"})
-        self.assertEqual(len(result["symbolBars"]["159977"]), len(bars_by_symbol["159977"]))
-        self.assertEqual(set(result["symbolBars"]["159977"][0]), {"datetime", "open", "high", "low", "close", "volume"})
+        self.assertIn("当日分时", captured.exception.detail)
 
     def test_single_symbol_backtest_returns_the_same_ohlcv_bars_used_for_signals(self) -> None:
         """Expose the exact historical candles so trade markers align with executed bars."""
@@ -212,9 +174,9 @@ class MarketAdapterTest(unittest.TestCase):
             "volume": np.full(len(close), 1000.0),
         })
         metadata = {"source": "fixture"}
-        with patch("app.main.fetch_bars", return_value=(bars, metadata)):
+        with patch("app.main.fetch_daily_history", return_value=(bars, metadata)):
             result = backtest_endpoint(BacktestInput(
-                symbol="159977", timeframe="daily", strategyType="growth_momentum", fastPeriod=3, slowPeriod=8,
+                symbol="159977", timeframe="daily", strategyType="swing_breakout", fastPeriod=3, slowPeriod=8,
             ))
 
         self.assertEqual(result["symbol"], "159977")
@@ -222,20 +184,12 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(result["bars"][0]["datetime"], bars.iloc[0]["datetime"].strftime("%Y-%m-%d %H:%M:%S"))
         self.assertEqual(result["bars"][0]["close"], float(bars.iloc[0]["close"]))
 
-    def test_ml_endpoint_distinguishes_source_failure_from_training_failure(self) -> None:
-        with patch("app.main.fetch_daily_history", side_effect=OSError("行情源断开")):
-            with self.assertRaises(HTTPException) as captured:
-                backtest_endpoint(BacktestInput(strategyType="ml_direction", symbols=["159977"]))
-        self.assertEqual(captured.exception.status_code, 502)
-        self.assertIn("历史行情获取失败", captured.exception.detail)
-        self.assertIn("行情源断开", captured.exception.detail)
-
-    def test_growth_strategy_rejects_other_symbol_or_timeframe(self) -> None:
-        request = BacktestInput(symbol="000001.SZ", timeframe="daily", strategyType="growth_momentum")
+    def test_swing_strategy_rejects_other_symbol_or_timeframe(self) -> None:
+        request = BacktestInput(symbol="000001.SZ", timeframe="daily", strategyType="swing_breakout")
         with self.assertRaises(HTTPException) as captured:
             backtest_endpoint(request)
         self.assertEqual(captured.exception.status_code, 422)
-        self.assertIn("159977 日K", captured.exception.detail)
+        self.assertIn("创业板 ETF", captured.exception.detail)
 
     def test_trend_filter_uses_long_adjusted_history(self) -> None:
         """Run the long-term strategy against the history series used by its MA warmup."""
@@ -347,6 +301,50 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(result["metadata"]["analysisBasis"], "最近五个交易日分钟数据")
         self.assertEqual(fetch.call_args_list[1].args, ("159977", "five_day"))
         self.assertEqual(len(analyze_mock.call_args.args[0]), 80)
+
+    def test_intraday_strategy_uses_only_current_session_bars(self) -> None:
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2026-11-02 09:30", periods=30, freq="min"),
+            "open": np.linspace(1, 1.1, 30), "high": np.linspace(1, 1.1, 30),
+            "low": np.linspace(1, 1.1, 30), "close": np.linspace(1, 1.1, 30),
+            "volume": np.full(30, 100.0),
+        })
+        metadata = {"source": "fixture", "sourceTime": "2026-11-02 09:59", "exchange": "SZ", "sampled": True, "marketOpen": False}
+        with patch("app.main.fetch_bars", side_effect=[(bars, dict(metadata)), (bars, dict(metadata))]) as fetch, patch("app.main.analyze", return_value={"signal": "ok"}) as analysis:
+            result = market_endpoint("159977", "intraday", "intraday_scalp", 5, 20)
+
+        self.assertEqual([call.args for call in fetch.call_args_list], [("159977", "intraday"), ("159977", "five_day")])
+        self.assertEqual(len(analysis.call_args.args[0]), 30)
+        self.assertEqual(result["metadata"]["analysisBasis"], "当日分钟K线")
+        self.assertEqual(len(result["bars"]), 30)
+        self.assertTrue(result["strategy"]["supported"])
+
+    def test_swing_backtest_uses_long_daily_history(self) -> None:
+        """Route the daily swing strategy to adjusted long history, not chart samples."""
+        close = 20 + np.arange(100) * 0.02
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="D"),
+            "open": close, "high": close + 0.2, "low": close - 0.2,
+            "close": close, "volume": np.full(100, 1000.0),
+        })
+        with patch("app.main.fetch_daily_history", return_value=(bars, {"source": "fixture"})) as history, patch("app.main.fetch_bars") as short_history:
+            result = backtest_endpoint(BacktestInput(
+                symbol="159977", timeframe="daily", strategyType="swing_breakout",
+                fastPeriod=10, slowPeriod=20,
+            ))
+        history.assert_called_once_with("159977")
+        short_history.assert_not_called()
+        self.assertEqual(result["strategyType"], "swing_breakout")
+        self.assertEqual(len(result["bars"]), len(bars))
+
+    def test_intraday_backtest_rejects_daily_period(self) -> None:
+        """Require the minute strategy to receive its own intraday sample type."""
+        with self.assertRaises(HTTPException) as captured:
+            backtest_endpoint(BacktestInput(
+                symbol="159977", timeframe="daily", strategyType="intraday_scalp",
+                fastPeriod=5, slowPeriod=20,
+            ))
+        self.assertEqual(captured.exception.status_code, 422)
 
     def test_weekly_and_monthly_requests_use_their_adjusted_rows(self) -> None:
         start = date(2020, 1, 1)

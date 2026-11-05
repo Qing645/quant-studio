@@ -9,7 +9,28 @@ import pandas as pd
 import talib
 
 from .strategies import get_strategy_template
-from .ml import walk_forward_probabilities
+
+SUPPORTED_STRATEGIES = {"trend_filter", "swing_breakout", "intraday_scalp"}
+REQUIRED_BAR_COLUMNS = ("datetime", "open", "high", "low", "close", "volume")
+
+
+def _validate_bars(bars: pd.DataFrame) -> None:
+    """Reject malformed OHLCV input before indicators or equity calculations run."""
+    missing = [column for column in REQUIRED_BAR_COLUMNS if column not in bars.columns]
+    if missing:
+        raise ValueError(f"K线数据缺少字段：{', '.join(missing)}")
+    if len(bars) < 2:
+        raise ValueError("至少需要两根K线才能回测")
+    numeric = bars[["open", "high", "low", "close", "volume"]].to_numpy(dtype=float)
+    timestamps = pd.to_datetime(bars["datetime"], errors="coerce")
+    if not np.isfinite(numeric).all() or timestamps.isna().any():
+        raise ValueError("K线数据包含空值或非有限数值")
+    if np.any(numeric[:, :4] <= 0) or np.any(numeric[:, 4] < 0):
+        raise ValueError("K线价格必须为正数，成交量不能为负数")
+    if np.any(numeric[:, 1] < np.maximum(numeric[:, 0], numeric[:, 3])) or np.any(numeric[:, 2] > np.minimum(numeric[:, 0], numeric[:, 3])):
+        raise ValueError("K线最高价和最低价与开盘价、收盘价不一致")
+    if not timestamps.is_monotonic_increasing or timestamps.duplicated().any():
+        raise ValueError("K线时间必须严格递增且不能重复")
 
 def run_backtest(
     bars: pd.DataFrame,
@@ -18,22 +39,28 @@ def run_backtest(
     slippage_bps: float,
     fast_period: int,
     slow_period: int,
-    strategy_type: str = "ml_direction",
+    strategy_type: str = "trend_filter",
 ) -> dict[str, Any]:
     """Simulate next-bar execution and return portfolio and trade statistics."""
     if fast_period < 2 or slow_period <= fast_period or slow_period > 250:
         raise ValueError("均线周期需满足 2 <= 快线 < 慢线 <= 250")
-    if strategy_type not in {"growth_momentum", "trend_filter", "ml_direction"}:
+    if strategy_type not in SUPPORTED_STRATEGIES:
         raise ValueError("不支持的策略类型")
+    _validate_bars(bars)
     if initial_capital <= 0 or not 0 <= fee_rate <= 0.02 or not 0 <= slippage_bps <= 500:
         raise ValueError("资金、手续费或滑点参数超出允许范围")
     close = bars["close"].to_numpy(dtype=np.float64)
     open_price = bars["open"].to_numpy(dtype=np.float64)
+    high = bars["high"].to_numpy(dtype=np.float64)
+    low = bars["low"].to_numpy(dtype=np.float64)
     fast = talib.SMA(close, timeperiod=fast_period)
     slow = talib.SMA(close, timeperiod=slow_period)
-    regime_sma = slow
-    macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)[2]
-    rsi = talib.RSI(close, timeperiod=14)
+    regime_sma = talib.SMA(close, timeperiod=60) if strategy_type == "swing_breakout" else slow
+    ema_fast = talib.EMA(close, timeperiod=fast_period)
+    ema_slow = talib.EMA(close, timeperiod=slow_period)
+    atr = talib.ATR(high, low, close, timeperiod=20)
+    volume = bars["volume"].to_numpy(dtype=np.float64)
+    vwap = _session_vwap(bars) if strategy_type == "intraday_scalp" else np.full(len(bars), np.nan)
     cash = initial_capital
     shares = 0.0
     entry_value = 0.0
@@ -53,24 +80,18 @@ def run_backtest(
         # Use completed returns only so sizing cannot see the execution bar.
         daily_returns = pd.Series(np.diff(np.log(close), prepend=np.nan))
         annualized_volatility = daily_returns.rolling(20, min_periods=20).std().to_numpy() * np.sqrt(252)
-    ml_probabilities = np.full(len(bars), np.nan, dtype=float)
-    ml_diagnostics: dict[str, Any] | None = None
-    if strategy_type == "ml_direction":
-        ml_probabilities, ml_diagnostics = walk_forward_probabilities(bars)
-
     # A signal on bar N executes at bar N+1 open to avoid same-bar lookahead.
     for index in range(len(bars)):
         if index > 1:
-            if strategy_type == "ml_direction":
-                probability = ml_probabilities[index - 1]
-                crossed_up = np.isfinite(probability) and probability >= 0.55
-                crossed_down = np.isfinite(probability) and probability < 0.45
-            else:
-                crossed_up, crossed_down = _strategy_signals(
-                    strategy_type, index, close, fast, slow, regime_sma, macd_hist, rsi, template,
-                )
+            crossed_up, crossed_down = _strategy_signals(
+                strategy_type, index, close, fast, slow, regime_sma, template,
+                high=high, volume=volume,
+                ema_fast=ema_fast, ema_slow=ema_slow, atr=atr, vwap=vwap,
+                fast_period=fast_period, slow_period=slow_period,
+            )
+            force_intraday_close = strategy_type == "intraday_scalp" and index == len(bars) - 1 and shares > 0
             execution_price = open_price[index] * (1 + cost_rate)
-            if shares == 0 and crossed_up:
+            if shares == 0 and crossed_up and not (strategy_type == "intraday_scalp" and index == len(bars) - 1):
                 if strategy_type == "trend_filter":
                     signal_volatility = annualized_volatility[index - 1]
                     # Keep excess capital in cash when volatility exceeds the risk budget.
@@ -84,10 +105,11 @@ def run_backtest(
                 entry_cost = float(shares * open_price[index] * cost_rate)
                 transaction_cost_curve.append(entry_cost)
                 cash -= entry_value
-            elif shares > 0 and crossed_down:
-                exit_price = open_price[index] * (1 - cost_rate)
+            elif shares > 0 and (crossed_down or force_intraday_close):
+                raw_exit_price = close[index] if force_intraday_close else open_price[index]
+                exit_price = raw_exit_price * (1 - cost_rate)
                 proceeds = realized_proceeds + shares * exit_price
-                exit_cost = float(shares * open_price[index] * cost_rate)
+                exit_cost = float(shares * raw_exit_price * cost_rate)
                 total_pnl = proceeds - entry_value
                 trades.append({
                     "entry": entry_time,
@@ -154,7 +176,9 @@ def run_backtest(
     interval_minutes = bars["datetime"].diff().dt.total_seconds().median() / 60
     annualizer = _annualizer(interval_minutes)
     comparison_start = min(len(bars) - 1, max(slow_period, 20) + 1) if strategy_type == "trend_filter" else 0
-    annualized = (final_equity / initial_capital) ** (annualizer / max(len(bars) - comparison_start, 1)) - 1
+    # Equity includes the initial cash balance during warmup, so annualize over
+    # the full first-to-last return interval rather than only eligible bars.
+    annualized = 0.0 if strategy_type == "intraday_scalp" else (final_equity / initial_capital) ** (annualizer / max(len(bars) - 1, 1)) - 1
     # Returns are indexed by their ending bar, so include the interval ending
     # on the first eligible strategy bar in the Sharpe sample.
     metric_start = max(comparison_start - 1, 0) if strategy_type == "trend_filter" else 0
@@ -163,9 +187,9 @@ def run_backtest(
         "initialCapital": initial_capital,
         "finalEquity": float(final_equity),
         "totalReturnPct": float((final_equity / initial_capital - 1) * 100),
-        "annualizedReturnPct": float(annualized * 100),
+        "annualizedReturnPct": None if strategy_type == "intraday_scalp" else float(annualized * 100),
         "maxDrawdownPct": float(drawdowns.min() * 100),
-        "sharpe": float(np.sqrt(annualizer) * metric_returns.mean() / metric_returns.std()) if metric_returns.size and metric_returns.std() else 0.0,
+        "sharpe": None if strategy_type == "intraday_scalp" else float(np.sqrt(annualizer) * metric_returns.mean() / metric_returns.std()) if metric_returns.size and metric_returns.std() else 0.0,
         "winRatePct": float(np.mean([trade["returnPct"] > 0 for trade in trades]) * 100) if trades else 0.0,
         "tradeCount": len(trades),
         "exposurePct": float(np.mean(exposure_curve) * 100) if exposure_curve else 0.0,
@@ -183,6 +207,8 @@ def run_backtest(
         "strategyType": strategy_type,
         "caveat": template["caveat"],
     }
+    if strategy_type == "intraday_scalp":
+        result["sampleWarning"] = "仅回测当前可获取的当日分钟样本；该结果不能代表长期策略表现。"
     if strategy_type == "trend_filter":
         benchmark_curve = np.full(len(close), initial_capital, dtype=float)
         benchmark_curve[comparison_start:] = initial_capital * close[comparison_start:] / close[comparison_start]
@@ -198,10 +224,6 @@ def run_backtest(
         }
         result["positionSizingTargetVolatilityPct"] = 20.0
         result["rebalanceCount"] = rebalance_count
-    if ml_diagnostics is not None:
-        result["machineLearning"] = ml_diagnostics
-        result["_exposureCurve"] = exposure_curve
-        result["_transactionCostCurve"] = transaction_cost_curve
     return result
 
 
@@ -238,6 +260,7 @@ def analyze_strategy(
             "message": "至少需要两根已完成K线才能计算策略信号。",
             "asOf": None,
         }
+    _validate_bars(bars)
 
     close = bars["close"].to_numpy(dtype=np.float64)
     high = bars["high"].to_numpy(dtype=np.float64)
@@ -249,39 +272,39 @@ def analyze_strategy(
         "strategyType": strategy_type,
         "asOf": bars.iloc[latest]["datetime"].isoformat(),
         "price": float(close[latest]),
-        "basis": "日K",
+        "basis": "分钟K" if strategy_type == "intraday_scalp" else "日K",
         "entryCondition": False,
         "exitCondition": False,
     }
 
-    if strategy_type == "ml_direction":
-        try:
-            probabilities, diagnostics = walk_forward_probabilities(bars)
-        except ValueError as exc:
-            result.update({"signal": "数据不足", "message": str(exc)})
+    if strategy_type == "intraday_scalp":
+        ema_fast = talib.EMA(close, timeperiod=fast_period)
+        ema_slow = talib.EMA(close, timeperiod=slow_period)
+        vwap = _session_vwap(bars)
+        if latest < 1 or not np.isfinite([ema_fast[latest], ema_slow[latest], ema_fast[latest - 1], ema_slow[latest - 1], vwap[latest]]).all():
+            result.update({"signal": "数据不足", "message": "当前分钟样本不足以计算所选均线和VWAP。"})
             return result
-        probability = probabilities[latest]
-        if not np.isfinite(probability):
-            result.update({"signal": "暂无样本外预测", "message": "当前样本尚未生成有效的样本外概率。"})
-            return result
-        entry = bool(probability >= 0.55)
-        exit_ = bool(probability < 0.45)
-        result.update({
-            "entryCondition": entry,
-            "exitCondition": exit_,
-            "probabilityPct": float(probability * 100),
-            "signal": "达到入场阈值" if entry else "达到退出阈值" if exit_ else "处于观望区间",
-            "message": f"最新样本外上涨概率 {probability * 100:.1f}%；入场阈值 55%，退出阈值 45%。",
-            "diagnostics": diagnostics,
-        })
+        entry = bool(ema_fast[latest] > ema_slow[latest] and ema_fast[latest - 1] <= ema_slow[latest - 1] and close[latest] > vwap[latest])
+        exit_ = bool(ema_fast[latest] < ema_slow[latest] or close[latest] < vwap[latest])
+        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "日内入场条件触发" if entry else "日内退出条件触发" if exit_ else "等待分钟信号", "message": f"EMA{fast_period} {ema_fast[latest]:.4f} / EMA{slow_period} {ema_slow[latest]:.4f}；VWAP {vwap[latest]:.4f}。只做日内，不持仓过夜。"})
         return result
 
     fast = talib.SMA(close, timeperiod=fast_period)
     slow = talib.SMA(close, timeperiod=slow_period)
-    regime_sma = talib.SMA(close, timeperiod=regime_period)
+    regime_sma = talib.SMA(close, timeperiod=60 if strategy_type == "swing_breakout" else regime_period)
     atr = talib.ATR(high, low, close, timeperiod=20)
-    macd_hist = talib.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)[2]
-    rsi = talib.RSI(close, timeperiod=14)
+    if strategy_type == "swing_breakout":
+        entry, exit_ = _strategy_signals(
+            strategy_type, len(bars), close, fast, slow, regime_sma, template,
+            high=high, volume=bars["volume"].to_numpy(dtype=np.float64), atr=atr,
+            fast_period=fast_period, slow_period=slow_period,
+        )
+        if not np.isfinite([fast[latest], regime_sma[latest], atr[latest]]).all():
+            result.update({"signal": "数据不足", "message": "当前样本不足以计算日K波段条件。"})
+            return result
+        result.update({"entryCondition": entry, "exitCondition": exit_, "signal": "波段入场条件触发" if entry else "波段风险退出触发" if exit_ else "等待日K突破", "message": f"收盘 {close[latest]:.3f}；SMA60 {regime_sma[latest]:.3f}；ATR20 {atr[latest]:.3f}。信号在下一根日K开盘执行。"})
+        return result
+
     if strategy_type == "trend_filter":
         if latest < 1 or not np.isfinite([close[latest], close[latest - 1], slow[latest], slow[latest - 1], regime_sma[latest], regime_sma[latest - 1]]).all():
             result.update({"signal": "数据不足", "message": f"至少需要 {regime_period} 根日K预热趋势均线。", "regime": "data_insufficient", "action": "observe"})
@@ -330,169 +353,8 @@ def analyze_strategy(
         })
         return result
 
-    entry, exit_ = _strategy_signals(
-        strategy_type, len(bars), close, fast, slow, regime_sma, macd_hist, rsi, template,
-    )
-    if not np.isfinite([fast[latest], slow[latest], macd_hist[latest], rsi[latest]]).all():
-        result.update({"signal": "数据不足", "message": "当前样本不足以计算完整的动量条件。"})
-        return result
-    result.update({
-        "entryCondition": entry,
-        "exitCondition": exit_,
-        "signal": "开仓条件触发" if entry else "离场条件触发" if exit_ else "等待信号",
-        "message": f"SMA{fast_period} {fast[latest]:.3f} / SMA{slow_period} {slow[latest]:.3f}；MACD柱 {macd_hist[latest]:.4f}；RSI14 {rsi[latest]:.1f}。",
-    })
-    return result
+    raise ValueError("不支持的策略类型")
 
-
-def run_ml_portfolio(
-    bars_by_symbol: dict[str, pd.DataFrame],
-    initial_capital: float,
-    fee_rate: float,
-    slippage_bps: float,
-    fast_period: int,
-    slow_period: int,
-) -> dict[str, Any]:
-    """Backtest independent symbol models with equal initial capital per eligible symbol."""
-    candidates: dict[str, dict[str, Any]] = {}
-    excluded: list[dict[str, str]] = []
-    for symbol, bars in bars_by_symbol.items():
-        try:
-            candidates[symbol] = run_backtest(
-                bars, 1.0, fee_rate, slippage_bps, fast_period, slow_period, "ml_direction",
-            )
-        except ValueError as exc:
-            excluded.append({"symbol": symbol, "reason": str(exc)})
-    if not candidates:
-        reasons = "；".join(f"{item['symbol']}: {item['reason']}" for item in excluded)
-        raise ValueError(f"所选标的均无法训练：{reasons}")
-
-    allocation = initial_capital / len(candidates)
-    dates = sorted({
-        point["time"] for result in candidates.values() for point in result["equityCurve"]
-    })
-    total_equity = pd.Series(0.0, index=dates)
-    total_benchmark = pd.Series(0.0, index=dates)
-    trades = []
-    symbol_results = []
-    diagnostics = []
-    open_positions = 0
-    open_position_details = []
-    total_exposure_value = pd.Series(0.0, index=dates)
-    total_transaction_costs = pd.Series(0.0, index=dates)
-    for symbol, result in candidates.items():
-        equity = pd.Series(
-            [point["value"] * allocation for point in result["equityCurve"]],
-            index=[point["time"] for point in result["equityCurve"]],
-        )
-        # Unlisted dates keep the allocated cash balance until the instrument has data.
-        aligned = equity.reindex(dates).ffill().fillna(allocation)
-        total_equity = total_equity.add(aligned, fill_value=0)
-        position_curve = pd.Series(
-            result["_exposureCurve"],
-            index=[point["time"] for point in result["equityCurve"]],
-        ).reindex(dates).ffill().fillna(0.0)
-        total_exposure_value = total_exposure_value.add(position_curve * allocation, fill_value=0)
-        cost_curve = pd.Series(
-            result["_transactionCostCurve"],
-            index=[point["time"] for point in result["equityCurve"]],
-        ).reindex(dates).fillna(0.0) * allocation
-        total_transaction_costs = total_transaction_costs.add(cost_curve, fill_value=0)
-        closes = pd.Series(
-            bars_by_symbol[symbol]["close"].to_numpy(dtype=float),
-            index=pd.to_datetime(bars_by_symbol[symbol]["datetime"]).dt.strftime("%Y-%m-%dT%H:%M:%S"),
-        )
-        benchmark = allocation * closes / closes.iloc[0]
-        aligned_benchmark = benchmark.reindex(dates).ffill().fillna(allocation)
-        total_benchmark = total_benchmark.add(aligned_benchmark, fill_value=0)
-        scaled_trades = [{
-            **trade,
-            "symbol": symbol,
-            "pnl": float(trade["pnl"] * allocation),
-            "transactionCost": float(trade["transactionCost"] * allocation),
-        } for trade in result["trades"]]
-        trades.extend(scaled_trades)
-        open_positions += int(result["openPosition"])
-        open_position_details.extend({
-            **position,
-            "symbol": symbol,
-            "entryCapital": float(position["entryCapital"] * allocation),
-            "totalPnl": float(position["totalPnl"] * allocation),
-        } for position in result["openPositions"])
-        diagnostics.append(result["machineLearning"])
-        symbol_results.append({
-            "symbol": symbol,
-            "initialCapital": allocation,
-            "finalEquity": float(result["finalEquity"] * allocation),
-            "totalReturnPct": float(result["totalReturnPct"]),
-            "tradeCount": result["tradeCount"],
-            "openPosition": result["openPosition"],
-            "buyHoldReturnPct": float((closes.iloc[-1] / closes.iloc[0] - 1) * 100),
-            "machineLearning": result["machineLearning"],
-        })
-
-    curve = total_equity.to_numpy(dtype=float)
-    peaks = np.maximum.accumulate(curve)
-    drawdowns = (curve - peaks) / peaks
-    returns = np.diff(curve) / curve[:-1] if len(curve) > 1 else np.array([])
-    interval_minutes = pd.Series(pd.to_datetime(dates)).diff().dt.total_seconds().median() / 60
-    annualizer = _annualizer(interval_minutes)
-    final_equity = float(curve[-1])
-    benchmark_curve = total_benchmark.to_numpy(dtype=float)
-    benchmark_return = float((benchmark_curve[-1] / initial_capital - 1) * 100)
-    benchmark_drawdowns = (benchmark_curve - np.maximum.accumulate(benchmark_curve)) / np.maximum.accumulate(benchmark_curve)
-    sample_count = sum(item["outOfSampleSamples"] for item in diagnostics)
-    weighted_accuracy = sum(item["accuracyPct"] * item["outOfSampleSamples"] for item in diagnostics) / sample_count
-    weighted_brier = sum(item["brierScore"] * item["outOfSampleSamples"] for item in diagnostics) / sample_count
-    common_start = max(item["outOfSampleStart"] for item in diagnostics)
-    common_end = min(item["outOfSampleEnd"] for item in diagnostics)
-    rolling_performance = _rolling_performance(
-        dates,
-        curve,
-        benchmark_curve,
-        total_exposure_value.to_numpy(dtype=float) / curve * 100,
-        total_transaction_costs.to_numpy(dtype=float),
-        common_start,
-        common_end,
-    )
-    return {
-        "initialCapital": initial_capital,
-        "finalEquity": final_equity,
-        "totalReturnPct": float((final_equity / initial_capital - 1) * 100),
-        "annualizedReturnPct": float(((final_equity / initial_capital) ** (annualizer / max(len(curve), 1)) - 1) * 100),
-        "maxDrawdownPct": float(drawdowns.min() * 100),
-        "sharpe": float(np.sqrt(annualizer) * returns.mean() / returns.std()) if returns.size and returns.std() else 0.0,
-        "winRatePct": float(np.mean([trade["returnPct"] > 0 for trade in trades]) * 100) if trades else 0.0,
-        "tradeCount": len(trades),
-        "exposurePct": float(np.mean(total_exposure_value.to_numpy(dtype=float) / curve) * 100),
-        "openPosition": open_positions > 0,
-        "openPositions": open_position_details,
-        "equityCurve": [{"time": time, "value": float(value)} for time, value in total_equity.items()],
-        "trades": sorted(trades, key=lambda trade: trade["entry"]),
-        "strategyType": "ml_direction",
-        "symbols": [item["symbol"] for item in symbol_results],
-        "symbolResults": symbol_results,
-        "benchmark": {
-            "name": "等权买入持有",
-            "totalReturnPct": benchmark_return,
-            "maxDrawdownPct": float(benchmark_drawdowns.min() * 100),
-            "equityCurve": [{"time": time, "value": float(value)} for time, value in total_benchmark.items()],
-        },
-        "machineLearning": {
-            "horizonBars": 5,
-            "outOfSampleSamples": sample_count,
-            "accuracyPct": float(weighted_accuracy),
-            "balancedAccuracyPct": float(np.mean([item["balancedAccuracyPct"] for item in diagnostics])),
-            "brierScore": float(weighted_brier),
-            "outOfSampleStart": min(item["outOfSampleStart"] for item in diagnostics),
-            "outOfSampleEnd": max(item["outOfSampleEnd"] for item in diagnostics),
-            "latestUpProbabilityPct": None,
-            "caveat": "指标按各标的样本外结果汇总；组合对标的等分初始资金，未按期再平衡。",
-        },
-        "rollingPerformance": rolling_performance,
-        "caveat": "多标的等分初始资金，各自独立训练；未按期再平衡，未建模涨跌停、分红税和市场冲击。",
-        "excludedSymbols": excluded,
-    }
 
 
 def _rolling_performance(
@@ -538,13 +400,37 @@ def _strategy_signals(
     fast: np.ndarray,
     slow: np.ndarray,
     regime_sma: np.ndarray,
-    macd_hist: np.ndarray,
-    rsi: np.ndarray,
     template: dict[str, Any],
+    *,
+    fast_period: int = 20,
+    slow_period: int = 60,
+    high: np.ndarray | None = None,
+    volume: np.ndarray | None = None,
+    ema_fast: np.ndarray | None = None,
+    ema_slow: np.ndarray | None = None,
+    atr: np.ndarray | None = None,
+    vwap: np.ndarray | None = None,
 ) -> tuple[bool, bool]:
     """Evaluate the selected strategy on the signal bar before next-open execution."""
     current = index - 1
     previous = current - 1
+    if strategy_type == "swing_breakout":
+        if current < max(slow_period, 60) or high is None or volume is None or atr is None:
+            return False, False
+        prior_high = np.max(high[current - slow_period:current])
+        volume_base = np.mean(volume[current - 20:current]) if current >= 20 else np.nan
+        entry = bool(close[current] > prior_high and close[current] > regime_sma[current] and volume[current] > volume_base * 1.2)
+        exit_ = bool(close[current] < fast[current] or close[current] < np.max(close[max(0, current - 20):current + 1]) - 2 * atr[current])
+        return entry, exit_
+    if strategy_type == "intraday_scalp":
+        if ema_fast is None or ema_slow is None or vwap is None or current < 1:
+            return False, False
+        values = [ema_fast[current], ema_slow[current], ema_fast[previous], ema_slow[previous], vwap[current], close[current]]
+        if not np.isfinite(values).all():
+            return False, False
+        entry = ema_fast[current] > ema_slow[current] and ema_fast[previous] <= ema_slow[previous] and close[current] > vwap[current]
+        exit_ = ema_fast[current] < ema_slow[current] or close[current] < vwap[current]
+        return bool(entry), bool(exit_)
     if strategy_type == "trend_filter":
         if previous < 0 or not np.isfinite([
             close[current], close[previous], slow[current], slow[previous],
@@ -560,20 +446,26 @@ def _strategy_signals(
         )
         return entry, exit_confirmed
 
-    values = [close[current], fast[current], slow[current], macd_hist[previous], macd_hist[current], rsi[current]]
-    if not np.isfinite(values).all():
-        return False, False
-    crossed_positive = macd_hist[previous] <= 0 < macd_hist[current]
-    crossed_negative = macd_hist[previous] >= 0 > macd_hist[current]
-    crossed_up = (
-        crossed_positive and fast[current] > slow[current] and close[current] > slow[current]
-        and template["entryRsiMin"] <= rsi[current] <= template["entryRsiMax"]
-    )
-    crossed_down = (
-        close[current] < fast[current] or crossed_negative or rsi[current] < template["exitRsiBelow"]
-    )
-    return bool(crossed_up), bool(crossed_down)
+    raise ValueError("不支持的策略类型")
 
+
+def _validate_bars(bars: pd.DataFrame) -> None:
+    """Reject malformed OHLCV input before indicators or equity calculations run."""
+    missing = [column for column in REQUIRED_BAR_COLUMNS if column not in bars.columns]
+    if missing:
+        raise ValueError(f"K线数据缺少字段：{', '.join(missing)}")
+    if len(bars) < 2:
+        raise ValueError("至少需要两根K线才能回测")
+    numeric = bars[["open", "high", "low", "close", "volume"]].to_numpy(dtype=float)
+    timestamps = pd.to_datetime(bars["datetime"], errors="coerce")
+    if not np.isfinite(numeric).all() or timestamps.isna().any():
+        raise ValueError("K线数据包含空值或非有限数值")
+    if np.any(numeric[:, :4] <= 0) or np.any(numeric[:, 4] < 0):
+        raise ValueError("K线价格必须为正数，成交量不能为负数")
+    if np.any(numeric[:, 1] < np.maximum(numeric[:, 0], numeric[:, 3])) or np.any(numeric[:, 2] > np.minimum(numeric[:, 0], numeric[:, 3])):
+        raise ValueError("K线最高价和最低价与开盘价、收盘价不一致")
+    if not timestamps.is_monotonic_increasing or timestamps.duplicated().any():
+        raise ValueError("K线时间必须严格递增且不能重复")
 
 def _annualizer(interval_minutes: float) -> int:
     """Choose annual periods from the observed bar spacing for minute through month bars."""
@@ -584,3 +476,17 @@ def _annualizer(interval_minutes: float) -> int:
     if interval_minutes <= 10 * 24 * 60:
         return 52
     return 12
+
+
+def _session_vwap(bars: pd.DataFrame) -> np.ndarray:
+    """Calculate a volume-weighted average price that resets at each session."""
+    typical = (bars["high"].to_numpy(float) + bars["low"].to_numpy(float) + bars["close"].to_numpy(float)) / 3
+    volume = bars["volume"].to_numpy(float)
+    dates = pd.to_datetime(bars["datetime"]).dt.date.to_numpy()
+    result = np.full(len(bars), np.nan)
+    for date in np.unique(dates):
+        indexes = np.flatnonzero(dates == date)
+        cumulative_volume = np.cumsum(volume[indexes])
+        cumulative_value = np.cumsum(typical[indexes] * volume[indexes])
+        result[indexes] = np.divide(cumulative_value, cumulative_volume, out=typical[indexes].copy(), where=cumulative_volume > 0)
+    return result

@@ -18,7 +18,7 @@ from http.client import HTTPException as ClientHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
-from .engine import analyze_strategy, run_backtest, run_ml_portfolio
+from .engine import analyze_strategy, run_backtest
 from .market import analyze, fetch_bars, fetch_daily_history, normalize_symbol
 from .strategies import get_strategy_template, get_strategy_templates
 
@@ -27,6 +27,7 @@ APP_ROOT = Path(__file__).resolve().parents[2]
 STRATEGIES_FILE = APP_ROOT / "data" / "strategies.json"
 AI_SERVICE = "quant-studio-ai"
 AI_USER_AGENT = "QuantStudio/0.1.0"
+SUPPORTED_TIMEFRAMES = {"intraday", "five_day", "daily", "weekly", "monthly"}
 app = FastAPI(title="Quant Studio API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -41,22 +42,21 @@ app.add_middleware(
 class StrategyInput(BaseModel):
     id: str | None = None
     name: str = Field(min_length=1, max_length=60)
-    strategyType: Literal["growth_momentum", "trend_filter", "ml_direction"] = "ml_direction"
-    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("ml_direction")["defaultFastPeriod"], ge=2, le=100)
-    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("ml_direction")["defaultSlowPeriod"], ge=3, le=250)
+    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp"] = "trend_filter"
+    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultFastPeriod"], ge=2, le=100)
+    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultSlowPeriod"], ge=3, le=250)
     description: str = Field(default="", max_length=500)
 
 
 class BacktestInput(BaseModel):
     symbol: str = "159977"
-    timeframe: str = "daily"
-    strategyType: Literal["growth_momentum", "trend_filter", "ml_direction"] = "ml_direction"
+    timeframe: Literal["intraday", "five_day", "daily", "weekly", "monthly"] = "daily"
+    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp"] = "trend_filter"
     initialCapital: float = Field(default=100_000, gt=0, le=100_000_000)
     feeRate: float = Field(default=0.0003, ge=0, le=0.02)
     slippageBps: float = Field(default=5, ge=0, le=500)
-    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("ml_direction")["defaultFastPeriod"], ge=2, le=100)
-    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("ml_direction")["defaultSlowPeriod"], ge=3, le=250)
-    symbols: list[str] = Field(default_factory=list, max_length=10)
+    fastPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultFastPeriod"], ge=2, le=100)
+    slowPeriod: int = Field(default_factory=lambda: get_strategy_template("trend_filter")["defaultSlowPeriod"], ge=3, le=250)
 
 
 class AISettings(BaseModel):
@@ -94,16 +94,37 @@ def health() -> dict[str, str]:
 @app.get("/api/market")
 def market(
     symbol: str = "159977",
-    timeframe: str = "daily",
-    strategyType: Annotated[Literal["growth_momentum", "trend_filter", "ml_direction"], Query()] = "trend_filter",
+    timeframe: Literal["intraday", "five_day", "daily", "weekly", "monthly"] = "daily",
+    strategyType: Annotated[Literal["trend_filter", "swing_breakout", "intraday_scalp"], Query()] = "trend_filter",
     fastPeriod: Annotated[int, Query(ge=2, le=100)] = 20,
     slowPeriod: Annotated[int, Query(ge=3, le=250)] = 60,
 ) -> dict[str, Any]:
     """Return public bars, technical indicators and the selected strategy signal."""
     try:
+        if timeframe not in SUPPORTED_TIMEFRAMES:
+            raise HTTPException(status_code=422, detail="不支持的行情周期")
         if fastPeriod >= slowPeriod:
             raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
         code = normalize_symbol(symbol)
+        template = get_strategy_template(strategyType)
+        if strategyType in {"swing_breakout", "intraday_scalp"} and (
+            (template["supportedSymbols"] and code not in template["supportedSymbols"])
+            or timeframe not in template["supportedTimeframes"]
+        ):
+            raise HTTPException(status_code=422, detail=template["scopeError"])
+        if strategyType == "intraday_scalp":
+            timeframe = "intraday"
+            bars, metadata = fetch_bars(code, timeframe)
+            analysis_bars, _ = fetch_bars(code, "five_day")
+            metadata["analysisBasis"] = "当日分钟K线"
+            strategy = analyze_strategy(bars, strategyType, fastPeriod, slowPeriod, code, timeframe)
+            strategy["barStatus"] = "in_progress" if metadata.get("marketOpen") else "completed"
+            if not metadata.get("marketOpen"):
+                strategy["message"] = "当前交易时段已结束；" + strategy["message"]
+            return {
+                "symbol": code, "timeframe": timeframe, "metadata": metadata,
+                "analysis": analyze(analysis_bars), "strategy": strategy, "bars": _records(bars),
+            }
         bars, metadata = fetch_bars(code, timeframe)
         analysis_bars = bars
         if timeframe in {"intraday", "1m"}:
@@ -144,7 +165,7 @@ def market(
         }
     except HTTPException:
         raise
-    except (RuntimeError, OSError, KeyError, ClientHTTPException) as exc:
+    except (ValueError, RuntimeError, OSError, KeyError, ClientHTTPException) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
@@ -186,51 +207,18 @@ def backtest(request: BacktestInput) -> dict[str, Any]:
     try:
         if request.fastPeriod >= request.slowPeriod:
             raise HTTPException(status_code=422, detail="快线周期必须小于慢线周期")
-        if request.strategyType == "ml_direction":
-            if request.timeframe != "daily":
-                raise HTTPException(status_code=422, detail="机器学习组合回测仅支持日K")
-            symbols = request.symbols or [request.symbol]
-            normalized_symbols = list(dict.fromkeys(normalize_symbol(item) for item in symbols))
-            if not normalized_symbols:
-                raise HTTPException(status_code=422, detail="至少选择一个股票或 ETF")
-            bars_by_symbol = {}
-            excluded_symbols = []
-            for code in normalized_symbols:
-                try:
-                    bars_by_symbol[code], _ = fetch_daily_history(code)
-                except (RuntimeError, OSError, KeyError, ClientHTTPException, ValueError) as exc:
-                    excluded_symbols.append({"symbol": code, "reason": str(exc)})
-            if not bars_by_symbol:
-                details = "；".join(
-                    f"{item['symbol']}: {item['reason']}" for item in excluded_symbols
-                )
-                raise HTTPException(status_code=502, detail=f"历史行情获取失败：{details}")
-            try:
-                result = run_ml_portfolio(
-                    bars_by_symbol, request.initialCapital, request.feeRate, request.slippageBps,
-                    request.fastPeriod, request.slowPeriod,
-                )
-            except ValueError as exc:
-                source_details = "；".join(
-                    f"{item['symbol']}: {item['reason']}" for item in excluded_symbols
-                )
-                detail = f"{exc}；行情源未纳入：{source_details}" if source_details else str(exc)
-                raise HTTPException(status_code=422, detail=detail) from exc
-            result["excludedSymbols"] = excluded_symbols + result.pop("excludedSymbols")
-            symbols_in_result = result.pop("symbols")
-            result["symbolBars"] = {
-                code: _records(bars_by_symbol[code])
-                for code in symbols_in_result
-            }
-            return {"symbols": symbols_in_result, "timeframe": "daily", **result}
         code = normalize_symbol(request.symbol)
         template = get_strategy_template(request.strategyType)
         supported_symbols = template["supportedSymbols"]
         supported_timeframes = template["supportedTimeframes"]
         if (supported_symbols and code not in supported_symbols) or request.timeframe not in supported_timeframes:
             raise HTTPException(status_code=422, detail=template["scopeError"])
-        if request.strategyType == "trend_filter":
+        if request.strategyType in {"trend_filter", "swing_breakout"}:
             bars, metadata = fetch_daily_history(code)
+        elif request.strategyType == "intraday_scalp":
+            if request.timeframe != "intraday":
+                raise HTTPException(status_code=422, detail="分钟级日内策略仅支持当日分时")
+            bars, metadata = fetch_bars(code, "intraday")
         else:
             bars, metadata = fetch_bars(code, request.timeframe)
         result = run_backtest(
@@ -241,12 +229,10 @@ def backtest(request: BacktestInput) -> dict[str, Any]:
         return {"symbol": code, "timeframe": request.timeframe, "metadata": metadata, **result}
     except HTTPException:
         raise
+    except (RuntimeError, OSError, KeyError, ClientHTTPException) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except ValueError as exc:
-        if request.strategyType == "ml_direction":
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except (ValueError, RuntimeError, OSError, KeyError, ClientHTTPException) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/ai/settings")

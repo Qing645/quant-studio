@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Activity, Plus, Save, Settings2 } from "@lucide/vue";
-import type { Strategy, StrategyTemplate, StrategyType } from "../types";
+import type { Strategy, StrategyTemplate } from "../types";
 
 defineProps<{
   strategies: Strategy[];
@@ -16,7 +16,6 @@ defineProps<{
 const emit = defineEmits<{
   newStrategy: [];
   selectStrategy: [strategy: Strategy];
-  selectType: [strategyType: StrategyType];
   save: [];
   reload: [];
   navigateBacktest: [];
@@ -27,10 +26,6 @@ function formatRule(rule: string | undefined, strategy: Strategy): string {
   return (rule ?? "").replaceAll("{fastPeriod}", String(strategy.fastPeriod)).replaceAll("{slowPeriod}", String(strategy.slowPeriod));
 }
 
-/** Send a method selection through the parent so defaults and scope stay aligned. */
-function selectMethod(event: Event): void {
-  emit("selectType", (event.target as HTMLSelectElement).value as StrategyType);
-}
 </script>
 
 <template>
@@ -38,7 +33,7 @@ function selectMethod(event: Event): void {
     <div>
       <div class="eyebrow">STRATEGY LAB <span class="eyebrow-line"></span> RESEARCH WORKSPACE</div>
       <h1>策略研究</h1>
-      <p>在当前策略上调整方法和参数，保存后用于回测。</p>
+      <p>管理独立策略及其参数，保存后用于实时分析和回测。</p>
     </div>
     <button class="primary-button" :disabled="saving || !templates.length" @click="emit('newStrategy')">
       <Plus :size="15" /> 新建策略
@@ -66,7 +61,7 @@ function selectMethod(event: Event): void {
     </aside>
     <section class="editor-section">
       <div class="section-head">
-        <div><h2>当前策略</h2><span>切换计算方法后，保存将更新当前记录</span></div>
+        <div><h2>当前策略</h2><span>每条策略独立保存规则和参数</span></div>
         <span class="draft-tag" role="status">
           {{ saving ? '保存中…' : !activeStrategy.id ? '未保存草稿' : changed ? '有未保存修改' : `已保存 · v${activeStrategy.version}` }}
         </span>
@@ -77,17 +72,22 @@ function selectMethod(event: Event): void {
           <label class="field full">
             <span>策略名称</span><input v-model="activeStrategy.name" maxlength="60" />
           </label>
-          <label class="field full">
-            <span>计算方法</span>
-            <select :value="activeStrategy.strategyType" @change="selectMethod">
-              <option v-for="template in templates" :key="template.strategyType" :value="template.strategyType">{{ template.label }}</option>
-            </select>
-          </label>
+          <div class="field full strategy-kind"><span>策略类型</span><strong>{{ activeTemplate?.label }}</strong></div>
           <label v-if="activeStrategy.strategyType === 'trend_filter'" class="field">
             <span>长期趋势均线</span>
             <div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" min="60" max="250" step="10" /><span>根日K SMA</span></div>
           </label>
-          <template v-else-if="activeStrategy.strategyType !== 'ml_direction'">
+          <template v-else-if="activeStrategy.strategyType === 'intraday_scalp' || activeStrategy.strategyType === 'swing_breakout'">
+            <label class="field">
+              <span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '快线周期' : '退出均线周期' }}</span>
+              <div class="number-field"><input v-model.number="activeStrategy.fastPeriod" type="number" min="2" max="100" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '根分钟K EMA' : '根日K SMA' }}</span></div>
+            </label>
+            <label class="field">
+              <span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '慢线周期' : '突破回看周期' }}</span>
+              <div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" min="3" max="250" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '根分钟K EMA' : '根日K高点' }}</span></div>
+            </label>
+          </template>
+          <template v-else>
             <label class="field">
               <span>快线周期</span>
               <div class="number-field"><input v-model.number="activeStrategy.fastPeriod" type="number" min="2" max="100" /><span>根K线 SMA</span></div>
@@ -118,7 +118,6 @@ function selectMethod(event: Event): void {
 
 <style scoped>
 .strategy-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
-.field select { width: 100%; min-height: 35px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: inherit; font: inherit; color-scheme: dark; }
-.field select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.strategy-kind strong { display: block; padding: 9px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); font-weight: 500; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 </style>

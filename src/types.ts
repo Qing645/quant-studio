@@ -1,6 +1,6 @@
 export type View = "market" | "strategy" | "backtest" | "ai";
 export type Timeframe = "intraday" | "five_day" | "daily" | "weekly" | "monthly";
-export type StrategyType = "growth_momentum" | "trend_filter" | "ml_direction";
+export type StrategyType = "trend_filter" | "swing_breakout" | "intraday_scalp";
 
 export interface Bar {
   datetime: string;
@@ -56,8 +56,6 @@ export interface StrategySignal {
   basis?: string;
   entryCondition?: boolean;
   exitCondition?: boolean;
-  probabilityPct?: number;
-  diagnostics?: Record<string, unknown>;
   barStatus?: "completed" | "in_progress";
   regime?: "bull" | "bear" | "rebound_watch" | "data_insufficient";
   action?: "hold" | "exit" | "observe";
@@ -94,27 +92,26 @@ export interface StrategyTemplate {
   supportedTimeframes: Timeframe[];
   scopeLabel: string;
   scopeError: string;
-  entryRsiMin: number | null;
-  entryRsiMax: number | null;
-  exitRsiBelow: number | null;
   caveat: string;
 }
 
 export interface BacktestResult {
   symbol?: string;
+  timeframe?: Timeframe;
+  strategyType?: StrategyType;
+  sampleWarning?: string;
   initialCapital: number;
   finalEquity: number;
   totalReturnPct: number;
-  annualizedReturnPct: number;
+  annualizedReturnPct: number | null;
   maxDrawdownPct: number;
-  sharpe: number;
+  sharpe: number | null;
   winRatePct: number;
   exposurePct: number;
   tradeCount: number;
   openPosition: boolean;
   equityCurve: { time: string; value: number }[];
   bars?: Bar[];
-  symbolBars?: Record<string, Bar[]>;
   trades: {
     entry: string;
     exit: string;
@@ -145,33 +142,9 @@ export interface BacktestResult {
     transactionCost: number;
   }[];
   caveat: string;
-  symbols?: string[];
-  symbolResults?: {
-    symbol: string;
-    initialCapital: number;
-    finalEquity: number;
-    totalReturnPct: number;
-    tradeCount: number;
-    openPosition: boolean;
-    machineLearning: NonNullable<BacktestResult["machineLearning"]>;
-  }[];
-  excludedSymbols?: { symbol: string; reason: string }[];
   benchmark?: { name: string; totalReturnPct: number; maxDrawdownPct: number; equityCurve: { time: string; value: number }[] };
   positionSizingTargetVolatilityPct?: number;
   rebalanceCount?: number;
-  machineLearning?: {
-    horizonBars: number;
-    trainingSamples: number;
-    outOfSampleSamples: number;
-    outOfSampleStart: string;
-    outOfSampleEnd: string;
-    accuracyPct: number;
-    balancedAccuracyPct: number;
-    brierScore: number;
-    auc: number | null;
-    latestUpProbabilityPct: number | null;
-    caveat: string;
-  };
 }
 
 export interface AISettings {
