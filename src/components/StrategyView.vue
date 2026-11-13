@@ -84,11 +84,11 @@ const presentation = computed(() => strategyPresentation(props.activeStrategy, p
           <template v-else-if="activeStrategy.strategyType === 'intraday_scalp' || activeStrategy.strategyType === 'swing_breakout'">
             <label class="field">
               <span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '快线周期' : '退出均线周期' }}</span>
-              <div class="number-field"><input v-model.number="activeStrategy.fastPeriod" type="number" min="2" max="100" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '根分钟K EMA' : '根日K SMA' }}</span></div>
+              <div class="number-field"><input v-model.number="activeStrategy.fastPeriod" type="number" min="2" max="100" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? `根${activeStrategy.parameters.decisionMinutes ?? 1}分钟K EMA` : '根日K SMA' }}</span></div>
             </label>
             <label class="field">
               <span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '慢线周期' : '突破回看周期' }}</span>
-              <div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" min="3" max="250" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '根分钟K EMA' : '根日K高点' }}</span></div>
+              <div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" min="3" max="250" /><span>{{ activeStrategy.strategyType === 'intraday_scalp' ? `根${activeStrategy.parameters.decisionMinutes ?? 1}分钟K EMA` : '根日K高点' }}</span></div>
             </label>
           </template>
           <StrategyParameters v-if="activeTemplate" :strategy="activeStrategy" :template="activeTemplate" />

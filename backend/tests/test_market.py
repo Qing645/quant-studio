@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 import json
 import unittest
@@ -9,7 +9,7 @@ from urllib.error import HTTPError
 import numpy as np
 import pandas as pd
 
-from app.market import _exchange_prefix, _minute_rows, _quote, analyze, fetch_bars, fetch_daily_history, is_market_open, normalize_symbol
+from app.market import _exclude_incomplete_current_daily_bar, _exchange_prefix, _minute_rows, _quote, analyze, fetch_bars, fetch_daily_history, is_market_open, normalize_symbol
 from app.main import AIBar, AISettings, BacktestInput, StrategyInput, _build_quant_context, _format_upstream_error, app, backtest as backtest_endpoint, list_strategy_templates, market as market_endpoint
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -174,6 +174,24 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(metadata["barCount"], 2)
         self.assertEqual(metadata["adjustment"], "前复权")
 
+    def test_daily_history_excludes_only_the_in_progress_current_session_bar(self) -> None:
+        bars = pd.DataFrame({
+            "datetime": pd.to_datetime(["2026-11-11", "2026-11-12"]),
+            "open": [1.0, 1.1], "high": [1.1, 1.2], "low": [0.9, 1.0],
+            "close": [1.05, 1.15], "volume": [1000, 1200],
+        })
+
+        during_session, excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 10, 30))
+        lunch, lunch_excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 12, 0))
+        after_close, close_excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 15, 1))
+
+        self.assertTrue(excluded)
+        self.assertEqual(len(during_session), 1)
+        self.assertFalse(lunch_excluded)
+        self.assertEqual(len(lunch), 2)
+        self.assertFalse(close_excluded)
+        self.assertEqual(len(after_close), 2)
+
     def test_long_history_falls_back_to_yahoo_and_adjusts_ohlc(self) -> None:
         """Use Yahoo adjusted-close factors when Eastmoney closes the connection."""
         yahoo_payload = {
@@ -299,6 +317,7 @@ class MarketAdapterTest(unittest.TestCase):
 
     def test_market_session_excludes_weekends_and_after_hours(self) -> None:
         self.assertTrue(is_market_open(datetime(2026, 11, 2, 14, 30)))
+        self.assertTrue(is_market_open(datetime(2026, 11, 12, 1, 30, tzinfo=timezone.utc)))
         self.assertFalse(is_market_open(datetime(2026, 11, 2, 15, 1)))
         self.assertFalse(is_market_open(datetime(2026, 11, 1, 10, 0)))
 

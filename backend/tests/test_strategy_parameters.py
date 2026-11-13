@@ -73,41 +73,6 @@ class EngineParametersTest(unittest.TestCase):
                     parameters=normalize_strategy_parameters("swing_breakout", {"atrMultiplier": multiplier}))
                 self.assertEqual(exit_, expected)
 
-    def test_intraday_holding_period_and_session_close(self) -> None:
-        """Use the custom holding gate while preserving mandatory completed-session exits."""
-        bars = sample_bars(True).iloc[:12]
-
-        def signals(_kind, index, *_args, **_kwargs):
-            """Enter once, then keep the indicator exit active."""
-            return index == 2, index >= 3
-
-        with patch("app.engine._strategy_signals", side_effect=signals):
-            for hold in (1, 5):
-                result = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp", parameters={"minHoldBars": hold})
-                self.assertEqual(result["trades"][0]["exit"], bars.iloc[2 + hold]["datetime"].isoformat())
-            forced = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp",
-                                  parameters={"minHoldBars": 60}, session_complete=True)
-            self.assertFalse(forced["openPosition"])
-
-    def test_intraday_atr_multiplier_changes_exit(self) -> None:
-        """ATR exits must use each instance's risk threshold."""
-        bars = sample_bars(True).iloc[:30].copy()
-        bars.loc[25:, ["open", "close"]] = [[10.5, 10.5]] + [[10.2, 10.2]] * 4
-        bars["high"], bars["low"] = bars["close"] + .05, bars["close"] - .05
-
-        def signals(_kind, index, *_args, **_kwargs):
-            """Enter before the pullback and let only the ATR condition exit."""
-            return index == 25, False
-
-        with patch("app.engine._strategy_signals", side_effect=signals), \
-                patch("app.engine.talib.ATR", return_value=np.full(len(bars), .2)):
-            tight = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp",
-                                 parameters={"minHoldBars": 1, "atrMultiplier": .5})
-            wide = run_backtest(bars, 100_000, 0, 0, 3, 8, "intraday_scalp",
-                                parameters={"minHoldBars": 1, "atrMultiplier": 3})
-        self.assertEqual(tight["tradeCount"], 1)
-        self.assertTrue(wide["openPosition"])
-
     def test_target_volatility_changes_exposure_and_live_context(self) -> None:
         """Risk budgets must influence entry/monthly sizing and be available to live AI."""
         close = np.cumprod(1 + np.random.default_rng(101).normal(.0008, .025, 500))
@@ -209,11 +174,11 @@ class StrategyParametersHTTPTest(LocalStrategyAPITest):
                 status, saved = self.request("/api/strategies", {"name": "测试实例", "strategyType": kind,
                     "fastPeriod": 8, "slowPeriod": 30, "parameters": parameters})
                 self.assertEqual(status, 200)
-                self.assertEqual(saved["parameters"], parameters)
+                self.assertEqual(saved["parameters"], normalize_strategy_parameters(kind, parameters))
                 status, revised = self.request("/api/strategies", {**saved, "name": "修改名称"})
                 self.assertEqual(status, 200)
                 self.assertEqual(revised["version"], 2)
-                self.assertEqual(revised["parameters"], parameters)
+                self.assertEqual(revised["parameters"], normalize_strategy_parameters(kind, parameters))
         status, items = self.request("/api/strategies")
         self.assertEqual(status, 200)
         self.assertEqual(len(items), 3)
@@ -224,7 +189,7 @@ class StrategyParametersHTTPTest(LocalStrategyAPITest):
         self.store.write_text(original, encoding="utf-8")
         status, items = self.request("/api/strategies")
         self.assertEqual(status, 200)
-        self.assertEqual(items[0]["parameters"], {"minHoldBars": 3, "atrMultiplier": 1.5})
+        self.assertEqual(items[0]["parameters"], normalize_strategy_parameters("intraday_scalp"))
         self.assertEqual(self.store.read_text(encoding="utf-8"), original)
         self.assertEqual(self.request("/api/strategies", {"name": "新实例"})[0], 200)
         self.assertEqual(json.loads(self.store.read_text())[-1], json.loads(original)[0])
@@ -240,11 +205,11 @@ class StrategyParametersHTTPTest(LocalStrategyAPITest):
                 query = urlencode({"strategyType": kind, "timeframe": period, "parameters": json.dumps(parameters)})
                 status, live = self.request("/api/market?" + query)
                 self.assertEqual(status, 200)
-                self.assertEqual(live["strategy"]["parameters"], parameters)
+                self.assertEqual(live["strategy"]["parameters"], normalize_strategy_parameters(kind, parameters))
                 status, historical = self.request("/api/backtest", {"strategyType": kind,
                     "timeframe": period, "parameters": parameters})
                 self.assertEqual(status, 200)
-                self.assertEqual(historical["parameters"], parameters)
+                self.assertEqual(historical["parameters"], normalize_strategy_parameters(kind, parameters))
 
     def test_invalid_requests_return_422_without_saving(self) -> None:
         """Validate ranges, type mismatches, malformed JSON and incompatible keys."""

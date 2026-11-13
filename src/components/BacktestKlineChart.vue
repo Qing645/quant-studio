@@ -14,6 +14,7 @@ const props = defineProps<{
   bars: Bar[];
   trades: Trade[];
   openPositions: OpenPosition[];
+  executions?: BacktestResult["executions"];
 }>();
 const element = ref<HTMLDivElement>();
 let chart: echarts.ECharts | undefined;
@@ -43,7 +44,9 @@ function drawChart(): void {
       itemStyle: { color: action === "买入" ? "#ed786a" : "#40c99b", borderColor: "#101817", borderWidth: 1 },
     }];
   };
-  const markers = [
+  const markers = props.executions
+    ? props.executions.flatMap((fill) => markerFor(fill.side === "buy" ? "买入" : "卖出", fill.time, fill.price))
+    : [
     ...props.trades.flatMap((trade) => [
       ...markerFor("买入", trade.entry, trade.entryPrice),
       ...markerFor("卖出", trade.exit, trade.exitPrice),
@@ -97,7 +100,7 @@ function drawChart(): void {
 /** Resize the chart with its panel and release its canvas on unmount. */
 function resizeChart(): void { chart?.resize(); }
 
-watch(() => [props.bars, props.trades, props.openPositions], drawChart, { deep: true });
+watch(() => [props.bars, props.trades, props.openPositions, props.executions], drawChart, { deep: true });
 onMounted(() => {
   drawChart();
   window.addEventListener("resize", resizeChart);

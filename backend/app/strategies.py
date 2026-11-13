@@ -34,27 +34,30 @@ STRATEGY_TEMPLATES: tuple[dict[str, Any], ...] = (
     },
     {
         "strategyType": "intraday_scalp",
-        "label": "分钟级日内交易",
-        "templateName": "分钟级日内交易",
+        "label": "创业板底仓做T",
+        "templateName": "创业板底仓做T",
         "defaultSymbol": "159977",
         "defaultTimeframe": "intraday",
         "defaultFastPeriod": 8,
         "defaultSlowPeriod": 21,
         "parameterDefinitions": [
-            {"key": "minHoldBars", "label": "最短持有根数", "default": 3, "min": 1, "max": 60, "step": 1, "integer": True, "unit": "根分钟K", "help": "达到此持有时长后才执行指标或ATR退出；完整交易日结束仍强制平仓。"},
-            {"key": "atrMultiplier", "label": "ATR回撤倍数", "default": 1.5, "min": 0.5, "max": 6, "step": 0.1, "integer": False, "unit": "倍 ATR20", "help": "相对持仓后收盘高点的回撤阈值；实时窗口无持仓信息时只展示指标观察条件。"},
+            {"key": "decisionMinutes", "label": "做T决策周期", "default": 1, "min": 1, "max": 15, "step": 1, "integer": True, "unit": "分钟", "options": [{"value": 1, "label": "1分钟"}, {"value": 5, "label": "5分钟"}, {"value": 15, "label": "15分钟"}], "help": "所选周期收盘后才确认信号，下一分钟报价成交。5/15分钟EMA与ATR使用此前交易日预热，VWAP每天重置；保护买回仍逐分钟检查。"},
+            {"key": "basePositionPct", "label": "期初底仓比例", "default": 50, "min": 10, "max": 100, "step": 5, "integer": False, "unit": "%初始权益", "help": "假设样本开始前已持有且可卖的份额；初始权益包含底仓市值与剩余现金，数量向下取整至100份。"},
+            {"key": "tPositionPct", "label": "单次做T份额", "default": 50, "min": 10, "max": 100, "step": 5, "integer": False, "unit": "%初始底仓", "help": "每次最多卖出该比例的旧底仓；买回份额当天锁定，不能循环卖出。"},
+            {"key": "minHoldBars", "label": "买回等待根数", "default": 3, "min": 1, "max": 60, "step": 1, "integer": True, "unit": "根决策K", "help": "按所选决策周期计数；卖出后至少等待此根数才允许回落企稳买回；上涨保护与14:55定时恢复不受等待限制。"},
+            {"key": "atrMultiplier", "label": "做T价差倍数", "default": 1.5, "min": 0.5, "max": 6, "step": 0.1, "integer": False, "unit": "倍 ATR20", "help": "VWAP溢价、买回目标与上涨保护的波动门槛，同时不低于双边成本与两个价格最小变动单位。"},
         ],
-        "description": "独立分钟级日内策略：EMA趋势向上且连续两根站上当日VWAP时入场；满足最短持有时长后，连续两根跌破VWAP、EMA死叉确认或ATR回撤退出。均线周期、持有根数和ATR倍数可配置。完整交易日结束强制平仓；盘中保留未平仓并按最新价估值。当日样本不能替代长期验证。",
-        "entryRule": "EMA{fastPeriod} 高于 EMA{slowPeriod} 且快线向上，连续两根收盘站在当日 VWAP 上方",
-        "exitRule": "最短持有{minHoldBars}根；连续两根跌破 VWAP、EMA死叉确认或回撤达到{atrMultiplier}倍 ATR20；收盘前平仓",
-        "entryLabel": "日内入场",
-        "exitLabel": "离场观察条件",
-        "executionNote": "只用已完成分钟K线判断，下一分钟开盘执行；持仓至少{minHoldBars}根分钟K后允许信号或{atrMultiplier}倍ATR退出，完整交易日样本结束强制平仓，不持仓过夜。盘中分析只展示指标条件，不代表实际持仓退出指令。",
+        "description": "先卖旧底仓、后买回的T+1研究策略。VWAP溢价覆盖成本和波动门槛，EMA快线连续两根低于慢线且快线及价格回落时观察卖出；回落企稳满足价差后买回，上涨保护或14:55起尝试恢复底仓。买回份额次日才可卖，底仓承担隔夜风险。",
+        "entryRule": "卖出后等待{minHoldBars}根；价格回落达到{atrMultiplier}倍ATR/成本/两跳价差并在VWAP下方企稳，结合原卖出价判断买回",
+        "exitRule": "EMA{fastPeriod}连续两根低于EMA{slowPeriod}且快线及价格回落，VWAP溢价覆盖{atrMultiplier}倍ATR/双边成本/两跳价差，观察卖出旧底仓",
+        "entryLabel": "回落企稳观察",
+        "exitLabel": "旧底仓卖出观察",
+        "executionNote": "基于{decisionMinutes}分钟已收盘K线决策；初始权益中{basePositionPct}%为期初已有可卖底仓，每次最多使用初始底仓的{tPositionPct}%；信号下一分钟开盘执行，14:45后不再卖出做T，14:55起尝试买回恢复底仓。买回份额当日锁定，不保证全部恢复；底仓保留隔夜。实时信号不掌握账户持仓。",
         "supportedSymbols": ["159915", "159977", "159952", "159957", "159948"],
         "supportedTimeframes": ["intraday"],
         "scopeLabel": "创业板 ETF · 分钟级",
         "scopeError": "分钟级日内策略仅支持指定创业板 ETF 的当日分时",
-        "caveat": "分钟级公开行情仅有当日样本，不足以评估策略的长期收益、回撤和夏普；需接入多年历史分钟数据后才能开展可靠统计回测。",
+        "caveat": "底仓做T按T+1限制可卖份额，以同等初始底仓持有为基准；分钟采样价不是完整OHLC，短样本不足以评估长期收益。底仓始终承担市场与隔夜风险。",
     },
     {
         "strategyType": "trend_filter",
@@ -114,5 +117,7 @@ def normalize_strategy_parameters(strategy_type: str, parameters: dict[str, Any]
             raise ValueError(f"{field['label']}须在 {field['min']} 到 {field['max']} 之间")
         if field["integer"] and value != int(value):
             raise ValueError(f"{field['label']}必须为整数")
+        if field.get("options") and value not in {option["value"] for option in field["options"]}:
+            raise ValueError(f"{field['label']}只能选择：{', '.join(str(option['value']) for option in field['options'])}")
         result[field["key"]] = int(value) if field["integer"] else float(value)
     return result

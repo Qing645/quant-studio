@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { Activity, Bot, ChartCandlestick, Database, LoaderCircle, RefreshCw, Sparkles, Wifi } from "@lucide/vue";
 import MarketChart from "./MarketChart.vue";
-import type { MarketSnapshot, Strategy, StrategyPresentation, Timeframe, TimeframeOption } from "../types";
+import type { MarketSnapshot, Strategy, StrategyParameterDefinition, StrategyPresentation, Timeframe, TimeframeOption } from "../types";
 
 const props = defineProps<{
   symbol: string;
@@ -18,6 +18,7 @@ const props = defineProps<{
   strategies: Strategy[];
   activeStrategy: Strategy;
   activeTemplate: StrategyPresentation | undefined;
+  decisionPeriodField?: StrategyParameterDefinition;
   strategySaved: boolean;
   strategyChanged: boolean;
   strategySaving: boolean;
@@ -56,6 +57,7 @@ function updateStrategy(event: Event): void {
     <div class="heading-controls">
       <label class="symbol-input"><span>标的代码</span><input :value="symbol" maxlength="11" placeholder="159977" aria-label="输入六位股票或 ETF 代码" @input="updateSymbol" @keydown.enter="emit('refresh')" /><span class="exchange">{{ exchange }}</span></label>
       <label class="strategy-select"><span>实时策略</span><select :value="activeStrategy.id || '__draft__'" :disabled="strategySaving" @change="updateStrategy"><option v-if="!activeStrategy.id" value="__draft__">{{ activeStrategy.name || '当前草稿' }}</option><option v-for="strategy in strategies" :key="strategy.id" :value="strategy.id">{{ strategy.name }}</option></select></label>
+      <label v-if="activeStrategy.strategyType === 'intraday_scalp' && decisionPeriodField" class="strategy-select"><span>{{ decisionPeriodField.label }}</span><select v-model.number="activeStrategy.parameters[decisionPeriodField.key]" :disabled="strategySaving"><option v-for="option in decisionPeriodField.options" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
       <button v-if="strategyChanged" class="subtle-button save-live-strategy" :disabled="strategySaving" @click="emit('saveStrategy')">{{ strategySaving ? '保存中…' : strategySaved ? '保存策略修改' : '保存当前策略' }}</button>
       <div class="segmented" role="group" aria-label="行情周期"><button v-for="item in timeframeOptions" :key="item.value" :class="{ selected: timeframe === item.value }" :aria-pressed="timeframe === item.value" @click="emit('update:timeframe', item.value)">{{ item.label }}</button></div>
       <button class="primary-button" :disabled="loading" @click="emit('refresh')"><RefreshCw :size="15" /> 查询行情</button>
@@ -93,7 +95,7 @@ function updateStrategy(event: Event): void {
       </section>
     </div>
     <aside class="analysis-panel">
-      <div class="section-head"><div><h2>策略判断</h2><span>{{ activeStrategy.name || activeTemplate?.label || '未选择策略' }} · {{ snapshot?.strategy.asOf ? `信号截至 ${snapshot.strategy.asOf.slice(0, 10)}` : snapshot?.metadata.analysisBasis ?? '等待数据' }}<em v-if="snapshot?.strategy.barStatus === 'in_progress'"> · 盘中待收盘确认</em><em v-else-if="snapshot?.strategy.barStatus === 'completed'"> · 收盘确认</em></span></div><span class="signal-tag" :class="snapshot?.strategy.entryCondition ? 'signal-positive' : ''">{{ snapshot?.strategy.signal ?? "等待数据" }}</span></div>
+      <div class="section-head"><div><h2>策略判断</h2><span>{{ activeStrategy.name || activeTemplate?.label || '未选择策略' }} · {{ snapshot?.strategy.asOf ? `信号截至 ${snapshot.strategy.asOf.slice(0, activeStrategy.strategyType === 'intraday_scalp' ? 16 : 10).replace('T', ' ')}` : snapshot?.metadata.analysisBasis ?? '等待数据' }}<em v-if="snapshot?.strategy.barStatus === 'in_progress'"> · 盘中待收盘确认</em><em v-else-if="snapshot?.strategy.barStatus === 'completed'"> · 收盘确认</em></span></div><span class="signal-tag" :class="snapshot?.strategy.entryCondition ? 'signal-positive' : ''">{{ snapshot?.strategy.signal ?? "等待数据" }}</span></div>
       <div v-if="snapshot?.strategy.supported" class="condition-list">
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.entryCondition }"><Activity :size="15" /></span><span>{{ activeTemplate?.entryLabel ?? '入场条件' }} <small>{{ activeTemplate?.entryRule }}</small></span><b :class="snapshot.strategy.entryCondition ? 'up' : 'muted'">{{ snapshot.strategy.entryCondition ? '触发' : '未触发' }}</b></div>
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.exitCondition }"><ChartCandlestick :size="15" /></span><span>{{ activeTemplate?.exitLabel ?? '退出条件' }} <small>{{ activeTemplate?.exitRule }}</small></span><b :class="snapshot.strategy.exitCondition ? 'down' : 'muted'">{{ snapshot.strategy.exitCondition ? '触发' : '未触发' }}</b></div>

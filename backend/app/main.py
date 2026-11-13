@@ -141,6 +141,8 @@ def market(
     slowPeriod: Annotated[int | None, Query(ge=3, le=250)] = None,
     parameters: Annotated[str, Query(max_length=2000)] = "{}",
     rules: Annotated[str | None, Query(max_length=20000)] = None,
+    feeRate: Annotated[float, Query(ge=0, le=.02)] = .0003,
+    slippageBps: Annotated[float, Query(ge=0, le=500)] = 5,
 ) -> dict[str, Any]:
     """Return public bars, technical indicators and the selected strategy signal."""
     try:
@@ -173,9 +175,16 @@ def market(
                 "daily": "日K", "weekly": "周K", "monthly": "月K",
             }.get(timeframe, timeframe)
         strategy_bars = bars if strategyType == "intraday_scalp" or (settings.rules and settings.rules.timeframe == "intraday") else analysis_bars
+        if strategyType == "intraday_scalp" and timeframe == "intraday" and settings.parameters["decisionMinutes"] > 1:
+            strategy_bars = analysis_bars
+            metadata["analysisBasis"] = f"{settings.parameters['decisionMinutes']}分钟决策K · 最近五日分钟数据预热"
         strategy_bar_status = "completed"
         if settings.rules:
             strategy_bars, in_progress = completed_custom_bars(strategy_bars, timeframe)
+            strategy_bar_status = "in_progress" if in_progress else "completed"
+        elif strategyType == "intraday_scalp" and timeframe == "intraday":
+            # Intraday price sampling still has an unfinished last minute; do not turn it into a confirmed signal.
+            strategy_bars, in_progress = completed_custom_bars(strategy_bars, "intraday")
             strategy_bar_status = "in_progress" if in_progress else "completed"
         elif (
             timeframe in {"daily", "weekly", "monthly"}
@@ -188,6 +197,7 @@ def market(
         strategy = analyze_strategy(
             strategy_bars, strategyType, settings.fastPeriod, settings.slowPeriod, code, timeframe,
             parameters=settings.parameters, rules=settings.rules,
+            fee_rate=feeRate, slippage_bps=slippageBps,
         )
         strategy["barStatus"] = strategy_bar_status
         if strategy_bar_status == "in_progress" and strategy.get("supported"):
@@ -221,11 +231,23 @@ def _read_strategy_store() -> list[dict[str, Any]]:
 def get_strategies() -> list[dict[str, Any]]:
     """Fill legacy defaults in responses without rewriting saved user definitions."""
     return [
-        ({**item, "rules": normalize_custom_rules(item.get("rules")).model_dump(exclude_none=True)}
-         if item["strategyType"] == "custom" else
-         {**item, "parameters": normalize_strategy_parameters(item["strategyType"], item.get("parameters"))})
+        _strategy_response(item)
         for item in _read_strategy_store()
     ]
+
+
+def _strategy_response(item: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one saved instance and replace obsolete built-in day-flat copy without a data migration."""
+    if item["strategyType"] == "custom":
+        return {**item, "rules": normalize_custom_rules(item.get("rules")).model_dump(exclude_none=True)}
+    result = {**item, "parameters": normalize_strategy_parameters(item["strategyType"], item.get("parameters"))}
+    if item["strategyType"] == "intraday_scalp":
+        template = get_strategy_template("intraday_scalp")
+        result["description"] = template["description"]
+        if result.get("name") in {"创业板分钟级日内交易", "分钟级日内交易"}:
+            result["name"] = template["templateName"]
+    return result
+
 
 @app.get("/api/strategy-templates")
 def list_strategy_templates() -> list[dict[str, Any]]:
@@ -272,7 +294,10 @@ def backtest(request: BacktestInput) -> dict[str, Any]:
         elif request.strategyType == "intraday_scalp":
             if request.timeframe != "intraday":
                 raise HTTPException(status_code=422, detail="分钟级日内策略仅支持当日分时")
-            bars, metadata = fetch_bars(code, "intraday")
+            # Reuse the available dated five-session feed; the inventory ledger settles bought units per date.
+            bars, metadata = fetch_bars(code, "five_day")
+            bars, _ = completed_custom_bars(bars, "intraday")
+            metadata["backtestBasis"] = "最近可用分钟样本 · T+1底仓做T"
         else:
             bars, metadata = fetch_bars(code, request.timeframe)
         result = run_backtest(

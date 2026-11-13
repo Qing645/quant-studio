@@ -55,6 +55,10 @@ export interface StrategySignal {
   fastPeriod?: number;
   slowPeriod?: number;
   strategyType?: StrategyType;
+  tradingMode?: "base_t";
+  costAssumption?: { feeRate: number; slippageBps: number };
+  decisionMinutes?: number;
+  decisionBarCount?: number;
   signal: string;
   message: string;
   asOf: string | null;
@@ -149,6 +153,7 @@ export interface StrategyParameterDefinition {
   integer: boolean;
   unit: string;
   help: string;
+  options?: { value: number; label: string }[];
 }
 
 export interface StrategyTemplate {
@@ -174,6 +179,12 @@ export interface StrategyTemplate {
 }
 
 export interface BacktestResult {
+  metadata: {
+    source: string;
+    sourceTime: string;
+    adjustment?: string;
+    incompleteCurrentBarExcluded?: boolean;
+  };
   rules?: CustomRules;
   symbol?: string;
   timeframe?: Timeframe;
@@ -199,8 +210,40 @@ export interface BacktestResult {
     returnPct: number;
     pnl: number;
     transactionCost: number;
+    direction?: "sell_buy";
+    shares?: number;
+    exitReason?: string;
     symbol?: string;
   }[];
+  executions?: {
+    time: string;
+    side: "sell" | "buy";
+    price: number;
+    rawPrice: number;
+    shares: number;
+    reason: string;
+    transactionCost: number;
+    sellableShares: number;
+    lockedShares: number;
+    cash: number;
+  }[];
+  baseT?: {
+    decisionMinutes: number;
+    decisionBarCount: number;
+    initialShares: number;
+    initialCash: number;
+    currentShares: number;
+    sellableShares: number;
+    lockedShares: number;
+    cash: number;
+    pendingBuybackShares: number;
+    basePnl: number;
+    tPnl: number;
+    tReturnPct: number;
+    closedTPnl: number;
+    transactionCost: number;
+    initialization: string;
+  };
   openPositions?: {
     symbol?: string;
     entry: string;
@@ -222,7 +265,7 @@ export interface BacktestResult {
   }[];
   caveat: string;
   benchmark?: { name: string; totalReturnPct: number; maxDrawdownPct: number; equityCurve: { time: string; value: number }[] };
-  costSensitivity?: { scenario: string; totalReturnPct: number; maxDrawdownPct: number }[];
+  costSensitivity?: { scenario: string; totalReturnPct: number; maxDrawdownPct: number; tReturnPct?: number }[];
   parameters?: Record<string, number>;
   positionSizingTargetVolatilityPct?: number;
   rebalanceCount?: number;

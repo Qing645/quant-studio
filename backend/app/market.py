@@ -7,6 +7,7 @@ from datetime import datetime, time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -14,13 +15,14 @@ import talib
 
 
 DEFAULT_SYMBOL = "159977"
+CHINA_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def fetch_bars(symbol: str, timeframe: str) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Fetch normalized intraday or adjusted K-line bars from Tencent's public feed."""
     code = normalize_symbol(symbol)
     market_code = f"{_exchange_prefix(symbol)}{code}"
-    received_at = datetime.now()
+    received_at = datetime.now(CHINA_TIMEZONE)
     market_open = is_market_open(received_at)
     period_types = {"daily": "day", "weekly": "week", "monthly": "month"}
     if timeframe in {"intraday", "1m"}:
@@ -167,14 +169,23 @@ def fetch_daily_history(symbol: str) -> tuple[pd.DataFrame, dict[str, Any]]:
         )
         if bars.empty:
             raise RuntimeError(f"{code} 的东方财富有效历史日线为空")
-        return bars, _history_metadata(bars, market, "Eastmoney public adjusted daily history", "前复权")
+        source = "Eastmoney public adjusted daily history"
+        adjustment = "前复权"
     except (HTTPError, URLError, TimeoutError, ConnectionError, json.JSONDecodeError, RuntimeError) as eastmoney_error:
         try:
-            return _fetch_yahoo_daily_history(code, market)
+            bars, yahoo_metadata = _fetch_yahoo_daily_history(code, market)
+            source = yahoo_metadata["source"]
+            adjustment = yahoo_metadata["adjustment"]
         except (HTTPError, URLError, TimeoutError, ConnectionError, json.JSONDecodeError, KeyError, TypeError, ValueError, RuntimeError) as yahoo_error:
             raise RuntimeError(
                 f"历史行情获取失败：东方财富（{eastmoney_error}）；Yahoo Finance（{yahoo_error}）"
             ) from yahoo_error
+    bars, excluded_incomplete_bar = _exclude_incomplete_current_daily_bar(bars)
+    if bars.empty:
+        raise RuntimeError(f"{code} 没有可用于回测的已完成日K")
+    metadata = _history_metadata(bars, market, source, adjustment)
+    metadata["incompleteCurrentBarExcluded"] = excluded_incomplete_bar
+    return bars, metadata
 
 
 def _fetch_yahoo_daily_history(code: str, market: str) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -235,6 +246,21 @@ def _history_metadata(bars: pd.DataFrame, market: str, source: str, adjustment: 
     }
 
 
+def _exclude_incomplete_current_daily_bar(
+    bars: pd.DataFrame,
+    now: datetime | None = None,
+) -> tuple[pd.DataFrame, bool]:
+    """Exclude today's daily candle while the Shanghai market session is open."""
+    current = now or datetime.now(CHINA_TIMEZONE)
+    if current.tzinfo is not None:
+        current = current.astimezone(CHINA_TIMEZONE)
+    if bars.empty or not is_market_open(current):
+        return bars, False
+    if pd.Timestamp(bars.iloc[-1]["datetime"]).date() != current.date():
+        return bars, False
+    return bars.iloc[:-1].reset_index(drop=True), True
+
+
 def normalize_symbol(symbol: str) -> str:
     """Normalize common A-share symbol suffixes to a six-digit code."""
     code = symbol.upper()
@@ -274,8 +300,10 @@ def _kline_ohlcv_rows(rows: list[list[Any]]) -> list[list[Any]]:
 
 
 def is_market_open(now: datetime | None = None) -> bool:
-    """Approximate the standard A-share session using the computer's local clock."""
-    current = now or datetime.now()
+    """Approximate the standard A-share session using Shanghai local time."""
+    current = now or datetime.now(CHINA_TIMEZONE)
+    if current.tzinfo is not None:
+        current = current.astimezone(CHINA_TIMEZONE)
     if current.weekday() >= 5:
         return False
     current_time = current.time()

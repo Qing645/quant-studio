@@ -115,8 +115,11 @@ export function strategyValidationError(strategy: Strategy, template: StrategyTe
   if (!template) return "策略模板尚未加载";
   if (!inRange(strategy.fastPeriod, 2, 100, true) || !inRange(strategy.slowPeriod, strategy.fastPeriod + 1, 250, true))
     return "周期需满足 2 ≤ 快线 ≤ 100，且快线 < 慢线 ≤ 250";
-  for (const field of template.parameterDefinitions)
+  for (const field of template.parameterDefinitions) {
     if (!inRange(strategy.parameters[field.key], field.min, field.max, field.integer)) return `${field.label}须为${field.min}～${field.max}之间的${field.integer ? "整数" : "数值"}`;
+    if (field.options && !field.options.some(option => option.value === strategy.parameters[field.key]))
+      return `${field.label}请选择：${field.options.map(option => option.label).join("、")}`;
+  }
   return "";
 }
 
