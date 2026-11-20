@@ -89,12 +89,14 @@ class MarketAdapterTest(unittest.TestCase):
         templates = list_strategy_templates()
         by_type = {item["strategyType"]: item for item in templates}
 
-        self.assertEqual(set(by_type), {"trend_filter", "swing_breakout", "intraday_scalp"})
+        self.assertEqual(set(by_type), {"trend_filter", "swing_breakout", "intraday_scalp", "star50_breakout", "star50_pullback", "star50_channel"})
         self.assertEqual(by_type["trend_filter"]["defaultSlowPeriod"], 60)
         self.assertEqual(by_type["trend_filter"]["supportedSymbols"], ["159915", "159977", "159952", "159957", "159948"])
         self.assertEqual(by_type["trend_filter"]["supportedTimeframes"], ["daily"])
         self.assertEqual(by_type["swing_breakout"]["supportedTimeframes"], ["daily"])
         self.assertEqual(by_type["intraday_scalp"]["supportedTimeframes"], ["intraday"])
+        self.assertEqual(by_type["star50_breakout"]["supportedSymbols"], ["588080"])
+        self.assertEqual(by_type["star50_breakout"]["supportedTimeframes"], ["daily"])
 
     def test_market_confirms_strategy_on_last_closed_bar_during_session(self) -> None:
         """Keep an in-progress daily candle visible without using it for the signal."""
@@ -175,6 +177,7 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(metadata["adjustment"], "前复权")
 
     def test_daily_history_excludes_only_the_in_progress_current_session_bar(self) -> None:
+        """Auction and lunch candles are unfinished even when continuous trading is closed."""
         bars = pd.DataFrame({
             "datetime": pd.to_datetime(["2026-11-11", "2026-11-12"]),
             "open": [1.0, 1.1], "high": [1.1, 1.2], "low": [0.9, 1.0],
@@ -182,18 +185,21 @@ class MarketAdapterTest(unittest.TestCase):
         })
 
         during_session, excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 10, 30))
+        auction, auction_excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 9, 25))
         lunch, lunch_excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 12, 0))
         after_close, close_excluded = _exclude_incomplete_current_daily_bar(bars, datetime(2026, 11, 12, 15, 1))
 
         self.assertTrue(excluded)
         self.assertEqual(len(during_session), 1)
-        self.assertFalse(lunch_excluded)
-        self.assertEqual(len(lunch), 2)
+        self.assertTrue(auction_excluded)
+        self.assertEqual(len(auction), 1)
+        self.assertTrue(lunch_excluded)
+        self.assertEqual(len(lunch), 1)
         self.assertFalse(close_excluded)
         self.assertEqual(len(after_close), 2)
 
     def test_long_history_falls_back_to_yahoo_and_adjusts_ohlc(self) -> None:
-        """Use Yahoo adjusted-close factors when Eastmoney closes the connection."""
+        """Keep exchange tickers and adjusted OHLC correct when the primary feed fails."""
         yahoo_payload = {
             "chart": {
                 "result": [{
@@ -210,18 +216,21 @@ class MarketAdapterTest(unittest.TestCase):
                 "error": None,
             },
         }
-        yahoo_response = BytesIO(json.dumps(yahoo_payload).encode())
-        eastmoney_error = HTTPError("https://eastmoney.invalid", 403, "blocked", {}, BytesIO())
-        with patch("app.market.urlopen", side_effect=[eastmoney_error, yahoo_response]) as open_url:
-            bars, metadata = fetch_daily_history("159977")
+        for code, ticker, exchange in (("159977", "159977.SZ", "SZ"), ("588080", "588080.SS", "SH")):
+            with self.subTest(code=code):
+                yahoo_response = BytesIO(json.dumps(yahoo_payload).encode())
+                eastmoney_error = HTTPError("https://eastmoney.invalid", 403, "blocked", {}, BytesIO())
+                with patch("app.market.urlopen", side_effect=[eastmoney_error, yahoo_response]) as open_url:
+                    bars, metadata = fetch_daily_history(code)
 
-        self.assertEqual(open_url.call_count, 2)
-        self.assertIn("query1.finance.yahoo.com", open_url.call_args.args[0].full_url)
-        self.assertAlmostEqual(bars.iloc[0]["open"], 1.0)
-        self.assertAlmostEqual(bars.iloc[0]["high"], 1.1)
-        self.assertAlmostEqual(bars.iloc[0]["close"], 1.05)
-        self.assertEqual(metadata["source"], "Yahoo Finance public adjusted daily history")
-        self.assertEqual(metadata["adjustment"], "adjclose OHLC factor")
+                self.assertEqual(open_url.call_count, 2)
+                self.assertIn(f"query1.finance.yahoo.com/v8/finance/chart/{ticker}?", open_url.call_args.args[0].full_url)
+                self.assertAlmostEqual(bars.iloc[0]["open"], 1.0)
+                self.assertAlmostEqual(bars.iloc[0]["high"], 1.1)
+                self.assertAlmostEqual(bars.iloc[0]["close"], 1.05)
+                self.assertEqual(metadata["exchange"], exchange)
+                self.assertEqual(metadata["source"], "Yahoo Finance public adjusted daily history")
+                self.assertEqual(metadata["adjustment"], "adjclose OHLC factor")
 
     def test_long_history_error_reports_both_failed_sources(self) -> None:
         """Keep both source failures visible when no public history feed responds."""

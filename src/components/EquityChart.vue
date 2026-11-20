@@ -2,7 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import * as echarts from "echarts/core";
 import { LineChart } from "echarts/charts";
-import { GridComponent, TooltipComponent } from "echarts/components";
+import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { BacktestResult } from "../types";
 
@@ -10,7 +10,7 @@ const props = defineProps<{ result: BacktestResult }>();
 const element = ref<HTMLDivElement>();
 let chart: echarts.ECharts | undefined;
 
-echarts.use([LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
+echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
 /** Draw the marked-to-market equity curve for the latest backtest. */
 function drawChart(): void {
@@ -27,7 +27,7 @@ function drawChart(): void {
     yAxis: { type: "value", scale: true, axisLabel: { color: "#788983" }, splitLine: { lineStyle: { color: "#1e2a27" } } },
     series: [
       { name: "策略组合", type: "line", data: points.map((item) => +item.value.toFixed(2)), showSymbol: false, lineStyle: { color: "#49cba0", width: 2 }, areaStyle: { color: "rgba(51, 192, 145, .08)" } },
-      ...(props.result.benchmark ? [{ name: props.result.benchmark.name, type: "line" as const, data: props.result.benchmark.equityCurve.map((item) => +item.value.toFixed(2)), showSymbol: false, lineStyle: { color: "#efba63", width: 1.5, type: "dashed" as const } }] : []),
+      ...(props.result.benchmarks ?? (props.result.benchmark ? [props.result.benchmark] : [])).map((benchmark, index) => ({ name: benchmark.name, type: "line" as const, data: benchmark.equityCurve.map((item) => +item.value.toFixed(2)), showSymbol: false, lineStyle: { color: index ? "#7f9edb" : "#efba63", width: 1.5, type: "dashed" as const } })),
     ],
   });
 }

@@ -11,6 +11,10 @@ type OpenPosition = NonNullable<BacktestResult["openPositions"]>[number];
 
 const props = defineProps<{
   symbol: string;
+  strategyType?: string;
+  fastPeriod?: number;
+  slowPeriod?: number;
+  parameters?: Record<string, number>;
   bars: Bar[];
   trades: Trade[];
   openPositions: OpenPosition[];
@@ -57,6 +61,26 @@ function drawChart(): void {
     if (index < period - 1) return "-";
     return +(bars.slice(index - period + 1, index + 1).reduce((sum, bar) => sum + bar.close, 0) / period).toFixed(4);
   });
+  const priorChannel = (period: number, field: "high" | "low") => bars.map((_, index) => {
+    if (index < period) return "-";
+    const values = bars.slice(index - period, index).map((bar) => bar[field]);
+    return field === "high" ? Math.max(...values) : Math.min(...values);
+  });
+  const indicators = props.strategyType === "star50_channel"
+    ? [
+        { name: `SMA${props.parameters?.trendFilterPeriod ?? 200}`, data: movingAverage(props.parameters?.trendFilterPeriod ?? 200), color: "#67aee8" },
+        { name: `前${props.slowPeriod ?? 20}日高点`, data: priorChannel(props.slowPeriod ?? 20, "high"), color: "#efba63" },
+        { name: `前${props.fastPeriod ?? 10}日低点`, data: priorChannel(props.fastPeriod ?? 10, "low"), color: "#40c99b" },
+      ]
+    : props.strategyType === "star50_pullback"
+      ? [
+          { name: `SMA${props.slowPeriod ?? 200}`, data: movingAverage(props.slowPeriod ?? 200), color: "#67aee8" },
+          { name: `SMA${props.fastPeriod ?? 5}`, data: movingAverage(props.fastPeriod ?? 5), color: "#efba63" },
+        ]
+      : [
+          { name: "SMA20", data: movingAverage(20), color: "#efba63" },
+          { name: "SMA60", data: movingAverage(60), color: "#67aee8" },
+        ];
   const labels = bars.map((bar) => bar.datetime.length > 10 && bar.datetime.slice(11, 16) !== "00:00"
     ? bar.datetime.slice(5, 16)
     : bar.datetime.slice(0, 10));
@@ -71,7 +95,7 @@ function drawChart(): void {
       borderColor: "#2a3b37",
       textStyle: { color: "#e4efeb" },
     },
-    legend: { top: 0, right: 8, textStyle: { color: "#85948e", fontSize: 11 }, data: ["K线", "SMA20", "SMA60"] },
+    legend: { top: 0, right: 8, textStyle: { color: "#85948e", fontSize: 11 }, data: ["K线", ...indicators.map((line) => line.name)] },
     xAxis: { type: "category", data: labels, boundaryGap: true, axisLine: { lineStyle: { color: "#293733" } }, axisLabel: { color: "#788983", hideOverlap: true, fontSize: 10 } },
     yAxis: { type: "value", scale: true, splitNumber: 5, axisLabel: { color: "#788983", fontSize: 10 }, splitLine: { lineStyle: { color: "#1e2a27" } } },
     dataZoom: [
@@ -91,8 +115,7 @@ function drawChart(): void {
           data: markers,
         },
       },
-      { name: "SMA20", type: "line", data: movingAverage(20), showSymbol: false, lineStyle: { width: 1.2, color: "#efba63" } },
-      { name: "SMA60", type: "line", data: movingAverage(60), showSymbol: false, lineStyle: { width: 1.2, color: "#67aee8" } },
+      ...indicators.map((line) => ({ name: line.name, type: "line" as const, data: line.data, showSymbol: false, lineStyle: { width: 1.2, color: line.color } })),
     ],
   });
 }
@@ -100,7 +123,8 @@ function drawChart(): void {
 /** Resize the chart with its panel and release its canvas on unmount. */
 function resizeChart(): void { chart?.resize(); }
 
-watch(() => [props.bars, props.trades, props.openPositions, props.executions], drawChart, { deep: true });
+watch(() => [props.strategyType, props.fastPeriod, props.slowPeriod, props.parameters, props.bars, props.trades,
+  props.openPositions, props.executions], drawChart, { deep: true });
 onMounted(() => {
   drawChart();
   window.addEventListener("resize", resizeChart);

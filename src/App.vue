@@ -25,6 +25,7 @@ import {
 } from "./services/strategy";
 import type {
   AISettings,
+  AIReport,
   BacktestResult,
   MarketSnapshot,
   Strategy,
@@ -78,18 +79,16 @@ const backtestForm = reactive({
 const backtestResult = ref<BacktestResult | null>(null);
 const aiSettings = reactive<AISettings>({
   baseUrl: "https://api.openai.com/v1",
-  model: "gpt-4o-mini",
+  model: "",
   apiKey: "",
   hasApiKey: false
 });
-const aiResult = ref("");
+const aiReport = ref<AIReport | null>(null);
+const aiAnalysisError = ref("");
+const aiAnalysisBusy = ref(false);
 const aiBusy = ref(false);
 const aiMessage = ref("");
-const liveAIResult = ref("");
-const liveAIResultSourceTime = ref("");
-const liveAIError = ref("");
-const liveAIBusy = ref(false);
-let liveAIRequestId = 0;
+let aiAnalysisRequestId = 0;
 let refreshTimer: number | undefined;
 let refreshQueued = false;
 let marketRequestId = 0;
@@ -174,20 +173,18 @@ const selectedExchange = computed(() => {
 const freshness = computed(() =>
   snapshot.value?.metadata.sampled ? "分钟级公开行情" : "复权K线"
 );
-const liveAIContext = computed(() =>
+const aiAnalysisContext = computed(() =>
   JSON.stringify([
     symbol.value.trim().toUpperCase(),
     timeframe.value,
+    activeStrategy.value.id,
+    activeStrategy.value.name,
     strategyExecution(activeStrategy.value),
     activeStrategy.value.strategyType === "intraday_scalp" ? [backtestForm.feeRate, backtestForm.slippageBps] : null
   ])
 );
-const liveAIStale = computed(() =>
-  Boolean(
-    liveAIResult.value &&
-    snapshot.value &&
-    liveAIResultSourceTime.value !== snapshot.value.metadata.sourceTime
-  )
+const aiReportStale = computed(() =>
+  Boolean(aiReport.value && snapshot.value && aiReport.value.targetSourceTime !== snapshot.value.metadata.sourceTime)
 );
 
 /** Load the selected symbol and queue one refresh if a request is already running. */
@@ -219,7 +216,7 @@ async function loadMarket(): Promise<void> {
   const requestedStrategy = copyStrategy(activeStrategy.value);
   if (snapshot.value && snapshot.value.symbol !== requestedSymbol) {
     snapshot.value = null;
-    aiResult.value = "";
+    aiReport.value = null;
     backtestResult.value = null;
   }
   try {
@@ -337,7 +334,7 @@ function selectLiveStrategy(id: string): void {
   const strategy = strategies.value.find((item) => item.id === id);
   if (strategy) selectStrategy(strategy);
   else if (!id) startNewStrategy();
-  aiResult.value = "";
+  aiReport.value = null;
 }
 
 /** Read locally versioned strategy definitions from the API. */
@@ -461,6 +458,7 @@ function selectStrategy(strategy: Strategy): void {
     (item) => item.strategyType === strategy.strategyType
   );
   if (template) alignStrategyScope(template);
+  if (["star50_breakout", "star50_pullback", "star50_channel"].includes(strategy.strategyType)) timeframe.value = "daily";
   if (strategy.strategyType === "custom") symbol.value = strategy.rules.symbol;
   void loadMarket();
 }
@@ -513,6 +511,12 @@ async function loadAISettings(): Promise<void> {
 
 /** Persist model metadata and send any new key directly to the local keychain API. */
 async function saveAISettings(): Promise<void> {
+  const model = aiSettings.model.trim();
+  if (!model || model.length > 120) {
+    aiMessage.value = model ? "模型名称不能超过120个字符" : "请填写服务商提供的模型名称（模型 ID）";
+    return;
+  }
+  aiSettings.model = model;
   aiMessage.value = "正在保存模型配置";
   try {
     const result = await api<{ hasApiKey: boolean }>("/api/ai/settings", {
@@ -541,80 +545,49 @@ async function testAI(): Promise<void> {
   }
 }
 
-/** Explain the displayed snapshot and discard replies for superseded strategy parameters. */
-async function askAI(): Promise<void> {
+/** Generate one shared report and discard responses for a superseded strategy or symbol. */
+async function analyzeMarket(): Promise<void> {
   const current = snapshot.value;
-  if (!current) return;
-  const context = liveAIContext.value;
-  aiBusy.value = true;
-  aiResult.value = "";
+  if (!current || aiAnalysisBusy.value) return;
+  const requestId = ++aiAnalysisRequestId;
+  const context = aiAnalysisContext.value;
+  aiAnalysisBusy.value = true;
+  aiReport.value = null;
+  aiAnalysisError.value = "";
   try {
-    const result = await api<{ analysis: string }>("/api/ai/analyze", {
+    const result = await api<AIReport>("/api/ai/analyze", {
       method: "POST",
       body: JSON.stringify({
         symbol: current.symbol,
-        timeframe: timeframe.value,
+        timeframe: current.timeframe,
         sourceTime: current.metadata.sourceTime,
         analysisBasis: current.metadata.analysisBasis,
         analysis: current.analysis,
-        strategy: current.strategy,
+        strategy: {
+          ...current.strategy,
+          name: activeStrategy.value.name,
+          selectedConfiguration: strategyExecution(activeStrategy.value),
+          presentation: activePresentation.value
+        },
         bars: current.bars.slice(-500)
       })
     });
-    if (context === liveAIContext.value) aiResult.value = result.analysis;
+    if (requestId === aiAnalysisRequestId && context === aiAnalysisContext.value) aiReport.value = result;
   } catch (cause) {
-    if (context === liveAIContext.value)
-      aiResult.value = cause instanceof Error ? cause.message : "AI 分析失败";
+    if (requestId === aiAnalysisRequestId && context === aiAnalysisContext.value)
+      aiAnalysisError.value = cause instanceof Error ? cause.message : "AI 分析失败";
   } finally {
-    aiBusy.value = false;
-  }
-}
-
-/** Analyze the displayed live snapshot and discard replies for an older context. */
-async function analyzeLiveMarket(): Promise<void> {
-  const current = snapshot.value;
-  if (!current || liveAIBusy.value) return;
-  const requestId = ++liveAIRequestId;
-  const context = liveAIContext.value;
-  liveAIBusy.value = true;
-  liveAIResult.value = "";
-  liveAIError.value = "";
-  try {
-    const result = await api<{ analysis: string }>("/api/ai/analyze", {
-      method: "POST",
-      body: JSON.stringify({
-        symbol: current.symbol,
-        timeframe: timeframe.value,
-        sourceTime: current.metadata.sourceTime,
-        analysisBasis: current.metadata.analysisBasis,
-        analysis: current.analysis,
-        strategy: current.strategy,
-        bars: current.bars.slice(-500)
-      })
-    });
-    if (requestId === liveAIRequestId && context === liveAIContext.value) {
-      liveAIResult.value = result.analysis;
-      liveAIResultSourceTime.value = current.metadata.sourceTime;
-    }
-  } catch (cause) {
-    if (requestId === liveAIRequestId && context === liveAIContext.value) {
-      liveAIError.value =
-        cause instanceof Error ? cause.message : "AI 分析失败";
-    }
-  } finally {
-    if (requestId === liveAIRequestId) liveAIBusy.value = false;
+    if (requestId === aiAnalysisRequestId) aiAnalysisBusy.value = false;
   }
 }
 
 watch(
-  liveAIContext,
+  aiAnalysisContext,
   () => {
-    aiResult.value = "";
-    liveAIRequestId += 1;
-    liveAIResult.value = "";
-    liveAIResultSourceTime.value = "";
-    liveAIError.value = "";
-    liveAIBusy.value = false;
+    aiAnalysisRequestId += 1;
+    aiReport.value = null;
+    aiAnalysisError.value = "";
+    aiAnalysisBusy.value = false;
   },
   { flush: "sync" }
 );
@@ -640,7 +613,7 @@ watch(timeframe, () => {
   marketRequestId += 1;
   snapshot.value = null;
   marketStale.value = false;
-  aiResult.value = "";
+  aiReport.value = null;
   backtestResult.value = null;
   void loadMarket();
 });
@@ -789,17 +762,17 @@ onUnmounted(() => {
           "
           :strategy-changed="strategyChanged"
           :strategy-saving="strategySaving"
-          :ai-result="liveAIResult"
-          :ai-error="liveAIError"
-          :ai-busy="liveAIBusy"
+          :ai-report="aiReport"
+          :ai-error="aiAnalysisError"
+          :ai-busy="aiAnalysisBusy"
           :ai-ready="aiSettings.hasApiKey"
-          :ai-stale="liveAIStale"
+          :ai-stale="aiReportStale"
           @update:symbol="symbol = $event"
           @update:timeframe="timeframe = $event"
           @select-strategy="selectLiveStrategy"
           @save-strategy="saveStrategy"
           @refresh="loadMarket"
-          @analyze-ai="analyzeLiveMarket"
+          @analyze-ai="analyzeMarket"
           @navigate-ai="activeView = 'ai'"
           @navigate-backtest="activeView = 'backtest'"
         />
@@ -824,6 +797,9 @@ onUnmounted(() => {
           v-else-if="activeView === 'backtest'"
           :strategy-name="activeStrategy.name"
           :strategy-type="activeStrategy.strategyType"
+          :fast-period="activeStrategy.strategyType === 'custom' ? undefined : activeStrategy.fastPeriod"
+          :slow-period="activeStrategy.strategyType === 'custom' ? undefined : activeStrategy.slowPeriod"
+          :strategy-parameters="activeStrategy.strategyType === 'custom' ? {} : activeStrategy.parameters"
           :symbol="backtestRequest.symbol"
           :timeframe-label="backtestTimeframeLabel"
           :loading="loading"
@@ -837,12 +813,15 @@ onUnmounted(() => {
           v-else
           :settings="aiSettings"
           :busy="aiBusy"
+          :analysis-busy="aiAnalysisBusy"
           :message="aiMessage"
           :snapshot="snapshot"
-          :result="aiResult"
+          :report="aiReport"
+          :analysis-error="aiAnalysisError"
+          :stale="aiReportStale"
           @save="saveAISettings"
           @test="testAI"
-          @analyze="askAI"
+          @analyze="analyzeMarket"
         />
       </div>
       <footer class="app-footer">

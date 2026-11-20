@@ -7,6 +7,7 @@ import math
 import os
 from statistics import fmean, pstdev
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
@@ -20,6 +21,8 @@ from http.client import HTTPException as ClientHTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .ai_analysis import build_research_messages, parse_research_response, research_request_options
+from .ai_context import CHINA_TZ, fetch_market_context, reference_levels
 from .custom_rules import CustomRules, completed_custom_bars, get_rule_options, normalize_custom_rules
 from .engine import analyze_strategy, run_backtest
 from .market import analyze, fetch_bars, fetch_daily_history, normalize_symbol
@@ -45,7 +48,7 @@ app.add_middleware(
 class StrategyRules(BaseModel):
     """Validate independent user rules or the existing built-in configuration contract."""
 
-    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp", "custom"] = "trend_filter"
+    strategyType: Literal["trend_filter", "swing_breakout", "intraday_scalp", "star50_breakout", "star50_pullback", "star50_channel", "custom"] = "trend_filter"
     fastPeriod: int | None = Field(default=None, ge=2, le=100)
     slowPeriod: int | None = Field(default=None, ge=3, le=250)
     parameters: dict[str, Any] = Field(default_factory=dict)
@@ -94,6 +97,16 @@ class AISettings(BaseModel):
     model: str = Field(min_length=1, max_length=120)
     apiKey: str = Field(default="", max_length=1000)
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def validate_model_name(cls, value: Any) -> Any:
+        """Require an explicit provider model ID and normalize surrounding whitespace."""
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("请填写模型名称（服务商提供的模型 ID）")
+        return value
+
     @field_validator("baseUrl")
     @classmethod
     def validate_base_url(cls, value: str) -> str:
@@ -136,7 +149,7 @@ def health() -> dict[str, str]:
 def market(
     symbol: str = "159977",
     timeframe: Literal["intraday", "five_day", "daily", "weekly", "monthly"] = "daily",
-    strategyType: Annotated[Literal["trend_filter", "swing_breakout", "intraday_scalp", "custom"], Query()] = "trend_filter",
+    strategyType: Annotated[Literal["trend_filter", "swing_breakout", "intraday_scalp", "star50_breakout", "star50_pullback", "star50_channel", "custom"], Query()] = "trend_filter",
     fastPeriod: Annotated[int | None, Query(ge=2, le=100)] = None,
     slowPeriod: Annotated[int | None, Query(ge=3, le=250)] = None,
     parameters: Annotated[str, Query(max_length=2000)] = "{}",
@@ -179,7 +192,7 @@ def market(
             strategy_bars = analysis_bars
             metadata["analysisBasis"] = f"{settings.parameters['decisionMinutes']}分钟决策K · 最近五日分钟数据预热"
         strategy_bar_status = "completed"
-        if settings.rules:
+        if settings.rules or strategyType in {"star50_breakout", "star50_pullback", "star50_channel"}:
             strategy_bars, in_progress = completed_custom_bars(strategy_bars, timeframe)
             strategy_bar_status = "in_progress" if in_progress else "completed"
         elif strategyType == "intraday_scalp" and timeframe == "intraday":
@@ -289,7 +302,7 @@ def backtest(request: BacktestInput) -> dict[str, Any]:
             template = get_strategy_template(request.strategyType)
             if code not in template["supportedSymbols"] or request.timeframe not in template["supportedTimeframes"]:
                 raise HTTPException(status_code=422, detail=template["scopeError"])
-        if request.strategyType in {"trend_filter", "swing_breakout"} or (request.rules and request.timeframe == "daily"):
+        if request.strategyType in {"trend_filter", "swing_breakout", "star50_breakout", "star50_pullback", "star50_channel"} or (request.rules and request.timeframe == "daily"):
             bars, metadata = fetch_daily_history(code)
         elif request.strategyType == "intraday_scalp":
             if request.timeframe != "intraday":
@@ -347,8 +360,13 @@ def save_ai_settings(settings: AISettings) -> dict[str, Any]:
 
 
 @app.post("/api/ai/analyze")
-def analyze_with_ai(request: AIAnalysisInput) -> dict[str, str]:
-    """Ask a configured OpenAI-compatible model to explain supplied signals."""
+def analyze_with_ai(request: AIAnalysisInput) -> dict[str, Any]:
+    """Combine dated public evidence and the current strategy into one research report."""
+    # Validate nested free-form evidence before any credential reads or network requests.
+    try:
+        json.dumps(request.model_dump(), allow_nan=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="AI分析数据不能包含非有限数值") from exc
     settings = get_ai_settings()
     if not settings.get("baseUrl") or not settings.get("model"):
         raise HTTPException(status_code=409, detail="请先配置模型服务地址和模型名称")
@@ -359,79 +377,36 @@ def analyze_with_ai(request: AIAnalysisInput) -> dict[str, str]:
     if not api_key:
         raise HTTPException(status_code=409, detail="请先保存 API Key")
     endpoint = _chat_endpoint(settings["baseUrl"])
-    prompt = {
-        "symbol": request.symbol,
-        "timeframe": {
-            "intraday": "分时", "1m": "分时", "five_day": "五日",
-            "daily": "日K", "weekly": "周K", "monthly": "月K",
-        }.get(request.timeframe, request.timeframe),
-        "sourceTime": request.sourceTime,
-        "analysisBasis": request.analysisBasis,
-        "indicatorsAndSignals": request.analysis,
-        "selectedStrategy": request.strategy,
+    market_context = fetch_market_context()
+    target = {
+        "symbol": request.symbol, "timeframe": request.timeframe,
+        "sourceTime": request.sourceTime, "analysisBasis": request.analysisBasis,
+        "indicatorsAndSignals": request.analysis, "selectedStrategy": request.strategy,
         "historicalContext": _build_quant_context(request.bars),
-        "fieldDefinitions": {
-            "changePct": "最新一根K线收盘价相对前一根K线收盘价的涨跌幅百分比。",
-            "macd": "TA-Lib MACD 柱值，不是 MACD 线；正值只表示该指标当前为正。",
-            "rsi14": "14周期 RSI，范围通常为0到100；仅作动能参考，不单独构成信号。",
-            "atr20": "20周期 ATR，单位与价格相同，用于描述波动幅度，不是目标价。",
-            "trend": "最新收盘价是否高于 SMA60。",
-            "momentum": "MACD 柱值是否大于0。",
-            "volumeExpansion": "近5根K线平均成交量是否超过近30根均量的1.25倍。",
-            "breakout": "最新收盘价是否高于此前70根K线的最高价。",
-            "signal": "仅当 trend、momentum 均为真，且 volumeExpansion 或 breakout 至少一项为真时满足。",
-            "returnsPctByBars": "按5、20、60根当前所选周期K线计算的收盘价收益；样本不足时为null。",
-            "recentRangeByBars.positionPct": "最新收盘价在对应窗口最高价与最低价之间的位置，0接近区间低点，100接近区间高点；不是支撑阻力位。",
-            "recentRangeByBars.drawdownFromHighPct": "最新收盘价相对窗口内最高价的百分比变化，负值表示从高点回撤。",
-            "sma20ChangeVsPrior20Pct": "最近20根收盘均价相对其前一段20根收盘均价的百分比变化。",
-            "realizedVolatilityPct20": "最近20个单根K线收益率标准差乘以根数平方根的波动估算，不是年化值也不表示涨跌方向。",
-            "recentMoveSizeVsPrior15": "最近5根单根绝对收益均值相对之前15根的比值；大于1表示近期单根波动幅度扩大。",
-        },
-        "task": (
-            "请像一位熟悉量化研究的分析师，针对这一次数据写一段有重点的中文解读。先独立检查历史上下文，比较短、中、"
-            "长窗口的表现、价格在近期区间的位置、回撤和波动变化，找出至少一条不能从策略标签本身直接读出的观察。"
-            "不要只重述策略方向或列指标，要解释行情处于什么阶段、相对近端走势是延续还是变化。判断哪些证据互相印证、"
-            "哪些相互冲突，再解释这对当前行情状态意味着什么。结合所选策略的 signal、action、"
-            "entryCondition、exitCondition 说明规则为什么处于当前状态；若策略信号与短期反弹、动能或其他指标不一致，"
-            "解释它们观察尺度不同，不要把矛盾抹平。最后给出两三个可验证的观察条件，并说明什么变化会加强或削弱当前判断。"
-            "历史上下文中的收益窗口按K线根数计算，不能自行换算成自然日。区间位置不是支撑阻力预测，波动率也不代表方向。"
-            "避免固定套用标题、重复免责声明、泛泛而谈和机械罗列指标；"
-            "不要给买卖指令、仓位建议、目标价、收益预测或确定性方向判断。"
-        ),
-        "responseStyle": (
-            "中文自然表达，通常两到四个短段即可，长短由行情复杂度决定；可以直接使用小标题，但不要每次套用同一组标题。"
-            "引用输入中的具体数值作为依据，区分数据事实、策略规则和分析判断。历史上下文由当前请求所带K线计算，"
-            "窗口用K线根数标示；不要把它改述成天数。没有可用的历史上下文时，不得假称做过多周期比较。"
-            "不要声称看过未提供的盘中路径、新闻或资金流；缺失字段就略过或说明无法判断。"
-            "不要为了显得全面重复所有指标，也不要照抄策略说明。"
-        ),
     }
-    system_prompt = (
-        "你是严谨但表达自然的A股与ETF量化研究助理。先判断这次数据真正重要的变化或矛盾，再围绕它解释，"
-        "不要把每份回答写成相同的指标清单。将输入字段视为唯一事实来源；明确区分行情事实、策略规则判定和你的推断。"
-        "策略 signal/action 是规则输出，不等于投资建议。数据时间、周期或指标不足时简洁说明具体限制，不推测缺失数据，"
-        "不引用外部行情或新闻，不承诺收益或预测确定方向。"
-    )
     body = json.dumps({
-        "model": settings["model"],
-        "temperature": 0.55,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
-        ],
-    }).encode("utf-8")
+        "model": settings["model"], **research_request_options(settings["model"]),
+        "messages": build_research_messages(target, market_context),
+    }, ensure_ascii=False, allow_nan=False).encode("utf-8")
     req = Request(endpoint, data=body, headers={
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "User-Agent": AI_USER_AGENT,
     })
     try:
-        with urlopen(req, timeout=30) as response:
+        with urlopen(req, timeout=45) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        return {"analysis": payload["choices"][0]["message"]["content"]}
+        report = parse_research_response(payload)
+        return {
+            **report,
+            "generatedAt": datetime.now(CHINA_TZ).isoformat(timespec="seconds"),
+            "marketContextAsOf": market_context["retrievedAt"],
+            "targetSourceTime": request.sourceTime,
+            "sources": market_context["sources"], "warnings": market_context["warnings"],
+        }
     except HTTPError as exc:
         raise HTTPException(status_code=502, detail=_format_upstream_error(exc, api_key)) from exc
-    except (URLError, TimeoutError, KeyError, IndexError, json.JSONDecodeError) as exc:
+    except (URLError, TimeoutError, KeyError, IndexError, TypeError, ValueError, ClientHTTPException) as exc:
         raise HTTPException(status_code=502, detail=f"模型请求失败：{exc}") from exc
 
 
@@ -503,6 +478,10 @@ def _build_quant_context(bars: list[AIBar]) -> dict[str, Any]:
 
     closes20 = closes[-20:]
     context: dict[str, Any] = {
+        "referenceLevels": reference_levels([
+            {"date": bar.datetime, "open": bar.open, "close": bar.close, "high": bar.high, "low": bar.low}
+            for bar in valid
+        ]),
         "barCount": len(valid),
         "firstBar": valid[0].datetime,
         "lastBar": valid[-1].datetime,

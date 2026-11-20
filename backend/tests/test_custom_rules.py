@@ -267,8 +267,9 @@ class CustomRulesHTTPTest(LocalStrategyAPITest):
         self.assertEqual(self.store.read_text(), "[]")
 
     def test_catalog_separate_from_presets(self):
-        """Publishing editable vocabulary must not create another built-in strategy."""
+        """Editable vocabulary stays separate from the four explicitly supported built-ins."""
         status, options = self.request("/api/strategy-rule-options")
         self.assertEqual(status, 200)
         self.assertIn("highest", {item["value"] for item in options["indicators"]})
-        self.assertEqual(len(self.request("/api/strategy-templates")[1]), 3)
+        self.assertEqual({item["strategyType"] for item in self.request("/api/strategy-templates")[1]},
+                         {"trend_filter", "swing_breakout", "intraday_scalp", "star50_breakout", "star50_pullback", "star50_channel"})

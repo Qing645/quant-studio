@@ -81,6 +81,11 @@ const presentation = computed(() => strategyPresentation(props.activeStrategy, p
             <span>中期趋势确认均线</span>
             <div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" :min="activeStrategy.fastPeriod + 1" max="250" step="1" /><span>根日K SMA</span></div>
           </label>
+          <template v-else-if="['star50_breakout', 'star50_pullback', 'star50_channel'].includes(activeStrategy.strategyType)">
+            <label class="field"><span>{{ activeStrategy.strategyType === 'star50_channel' ? '退出低点回看周期' : activeStrategy.strategyType === 'star50_pullback' ? '均值恢复退出均线' : '退出确认均线' }}</span><div class="number-field"><input v-model.number="activeStrategy.fastPeriod" type="number" min="2" max="100" step="1" /><span>{{ activeStrategy.strategyType === 'star50_channel' ? '根已完成日K' : '根日K SMA' }}</span></div></label>
+            <label class="field"><span>{{ activeStrategy.strategyType === 'star50_channel' ? '突破高点回看周期' : '趋势过滤均线' }}</span><div class="number-field"><input v-model.number="activeStrategy.slowPeriod" type="number" :min="activeStrategy.fastPeriod + 1" max="250" step="1" /><span>{{ activeStrategy.strategyType === 'star50_channel' ? '根已完成日K' : '根日K SMA' }}</span></div></label>
+            <label v-if="activeStrategy.strategyType === 'star50_channel'" class="field"><span>趋势状态过滤均线</span><div class="number-field"><input v-model.number="activeStrategy.parameters.trendFilterPeriod" type="number" min="100" max="250" step="10" /><span>根日K SMA</span></div></label>
+          </template>
           <template v-else-if="activeStrategy.strategyType === 'intraday_scalp' || activeStrategy.strategyType === 'swing_breakout'">
             <label class="field">
               <span>{{ activeStrategy.strategyType === 'intraday_scalp' ? '快线周期' : '退出均线周期' }}</span>

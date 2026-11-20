@@ -20,7 +20,8 @@ fi
 if [ ! -d .venv313 ]; then
   "$PYTHON_BIN" -m venv .venv313
 fi
-if [ ! -x .venv313/bin/uvicorn ] || ! .venv313/bin/python -c 'import sklearn' >/dev/null 2>&1; then
+# Check the runtime imports declared in backend/requirements.txt before installing.
+if [ ! -x .venv313/bin/uvicorn ] || ! .venv313/bin/python -c 'import fastapi, uvicorn, pandas, numpy, talib, keyring' >/dev/null 2>&1; then
   .venv313/bin/pip install -r backend/requirements.txt
 fi
 if [ ! -d node_modules ]; then

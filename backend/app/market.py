@@ -190,7 +190,8 @@ def fetch_daily_history(symbol: str) -> tuple[pd.DataFrame, dict[str, Any]]:
 
 def _fetch_yahoo_daily_history(code: str, market: str) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Fetch Yahoo chart data and apply its adjusted-close factor to OHLC prices."""
-    symbol = f"{code}.{market.upper()}"
+    # Yahoo uses SS for Shanghai; SH remains the exchange code in our API metadata.
+    symbol = f"{code}.{'SS' if market == 'sh' else 'SZ'}"
     period_end = int(datetime.now().timestamp()) + 86_400
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -250,11 +251,11 @@ def _exclude_incomplete_current_daily_bar(
     bars: pd.DataFrame,
     now: datetime | None = None,
 ) -> tuple[pd.DataFrame, bool]:
-    """Exclude today's daily candle while the Shanghai market session is open."""
+    """Exclude today's unfinished candle before 15:00, including auction and lunch breaks."""
     current = now or datetime.now(CHINA_TIMEZONE)
     if current.tzinfo is not None:
         current = current.astimezone(CHINA_TIMEZONE)
-    if bars.empty or not is_market_open(current):
+    if bars.empty or (current.hour, current.minute) >= (15, 0):
         return bars, False
     if pd.Timestamp(bars.iloc[-1]["datetime"]).date() != current.date():
         return bars, False

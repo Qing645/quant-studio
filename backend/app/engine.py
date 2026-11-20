@@ -11,8 +11,9 @@ import talib
 from .custom_rules import CustomRules, RuleEvaluator, normalize_custom_rules
 from .intraday import analyze_base_t, run_base_t_backtest
 from .strategies import get_strategy_template, normalize_strategy_parameters
+from .star50 import analyze_star50, run_star50_backtest
 
-SUPPORTED_STRATEGIES = {"trend_filter", "swing_breakout", "intraday_scalp"}
+SUPPORTED_STRATEGIES = {"trend_filter", "swing_breakout", "intraday_scalp", "star50_breakout", "star50_pullback", "star50_channel"}
 REQUIRED_BAR_COLUMNS = ("datetime", "open", "high", "low", "close", "volume")
 
 
@@ -33,6 +34,7 @@ def _validate_bars(bars: pd.DataFrame) -> None:
         raise ValueError("K线最高价和最低价与开盘价、收盘价不一致")
     if not timestamps.is_monotonic_increasing or timestamps.duplicated().any():
         raise ValueError("K线时间必须严格递增且不能重复")
+
 
 def run_backtest(
     bars: pd.DataFrame,
@@ -63,6 +65,9 @@ def run_backtest(
     _validate_bars(bars)
     if initial_capital <= 0 or not 0 <= fee_rate <= 0.02 or not 0 <= slippage_bps <= 500:
         raise ValueError("资金、手续费或滑点参数超出允许范围")
+    if strategy_type in {"star50_breakout", "star50_pullback", "star50_channel"}:
+        return run_star50_backtest(bars, initial_capital, fee_rate, slippage_bps, fast_period, slow_period,
+                                   parameters, include_sensitivity=_include_cost_sensitivity, strategy_type=strategy_type)
     if strategy_type == "intraday_scalp":
         return run_base_t_backtest(bars, initial_capital, fee_rate, slippage_bps,
                                    fast_period, slow_period, parameters,
@@ -396,6 +401,9 @@ def analyze_strategy(
         }
     _validate_bars(bars)
 
+    if strategy_type in {"star50_breakout", "star50_pullback", "star50_channel"}:
+        return analyze_star50(bars, fast_period, slow_period, parameters, strategy_type)
+
     close = bars["close"].to_numpy(dtype=np.float64)
     high = bars["high"].to_numpy(dtype=np.float64)
     low = bars["low"].to_numpy(dtype=np.float64)
@@ -577,24 +585,6 @@ def _strategy_signals(
 
     raise ValueError("不支持的策略类型")
 
-
-def _validate_bars(bars: pd.DataFrame) -> None:
-    """Reject malformed OHLCV input before indicators or equity calculations run."""
-    missing = [column for column in REQUIRED_BAR_COLUMNS if column not in bars.columns]
-    if missing:
-        raise ValueError(f"K线数据缺少字段：{', '.join(missing)}")
-    if len(bars) < 2:
-        raise ValueError("至少需要两根K线才能回测")
-    numeric = bars[["open", "high", "low", "close", "volume"]].to_numpy(dtype=float)
-    timestamps = pd.to_datetime(bars["datetime"], errors="coerce")
-    if not np.isfinite(numeric).all() or timestamps.isna().any():
-        raise ValueError("K线数据包含空值或非有限数值")
-    if np.any(numeric[:, :4] <= 0) or np.any(numeric[:, 4] < 0):
-        raise ValueError("K线价格必须为正数，成交量不能为负数")
-    if np.any(numeric[:, 1] < np.maximum(numeric[:, 0], numeric[:, 3])) or np.any(numeric[:, 2] > np.minimum(numeric[:, 0], numeric[:, 3])):
-        raise ValueError("K线最高价和最低价与开盘价、收盘价不一致")
-    if not timestamps.is_monotonic_increasing or timestamps.duplicated().any():
-        raise ValueError("K线时间必须严格递增且不能重复")
 
 def _annualizer(interval_minutes: float) -> int:
     """Choose annual periods from the observed bar spacing for minute through month bars."""

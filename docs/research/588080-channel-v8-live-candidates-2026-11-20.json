@@ -1,0 +1,2196 @@
+{
+  "source": "quant-studio-588080-live-channel-backtest.json",
+  "sha256": "deeac2eb72b3ea852c456f4d9f3ade1057463e7fbce20a4362b33608ac302eb3",
+  "bars": 1458,
+  "start": "2020-11-16",
+  "end": "2026-11-19",
+  "initialCapital": 10000,
+  "feeRate": 0.0003,
+  "slippageBps": 5,
+  "validation": "Retrospective exploratory comparison; these histories have already been observed. Native snapshots overlap and are not independent samples. Sensitivity results are disclosed, not used to select defaults.",
+  "priorMechanisms": "A trend/oversold combination lost money and exceeded 39% drawdown; a 5% risk channel exceeded 21% drawdown. The 4% risk channel reduces sizing; the annual 15% objective remains unmet.",
+  "results": [
+    {
+      "name": "replaced_pullback",
+      "strategyType": "star50_pullback",
+      "fastPeriod": 5,
+      "slowPeriod": 200,
+      "parameters": {
+        "rsiThreshold": 10.0,
+        "initialAtrMultiplier": 2.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 2.0,
+        "maxPositionPct": 80.0,
+        "gapAtrMultiplier": 1.0
+      },
+      "totalReturnPct": 7.020549599999981,
+      "annualizedReturnPct": 1.180445646276973,
+      "maxDrawdownPct": -1.64199320784012,
+      "exposurePct": 1.6813371439847342,
+      "tradeCount": 25,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 8.153000000000032,
+          "maxDrawdownPct": -1.5717647058823503
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 5.950361599999954,
+          "maxDrawdownPct": -1.6823209654837856
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": -0.24137279999999484,
+          "annualizedReturnPct": -0.25133433819184425,
+          "maxDrawdownPct": -1.3575529004401732,
+          "sharpe": -0.17003631224850785
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.1529555931980564,
+          "annualizedReturnPct": 0.15994254900697502,
+          "maxDrawdownPct": -0.2568551948869402,
+          "sharpe": 0.24406328807201125
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 1.9275009587111924,
+          "annualizedReturnPct": 2.0163593760840204,
+          "maxDrawdownPct": -0.4924973453893533,
+          "sharpe": 1.4001805021739009
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 2.6656212522954803,
+          "annualizedReturnPct": 2.7772867866983963,
+          "maxDrawdownPct": -1.3416639895782012,
+          "sharpe": 0.9490376659844971
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 2.3614729845528926,
+          "annualizedReturnPct": 2.8267675597686504,
+          "maxDrawdownPct": -1.64199320784012,
+          "sharpe": 0.9026251875411401
+        }
+      ],
+      "largestClosedWinnerPnl": 172.74816000000055,
+      "netPnlLessLargestWinner": 529.3067999999971
+    },
+    {
+      "name": "channel_slope20",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 20,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 49.25254000000005,
+      "annualizedReturnPct": 7.171961121031001,
+      "maxDrawdownPct": -13.06385694641734,
+      "exposurePct": 12.312499565312734,
+      "tradeCount": 8,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 50.73799999999999,
+          "maxDrawdownPct": -12.985903460059811
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 47.585667199999925,
+          "maxDrawdownPct": -13.323531786375076
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.2919952000000281,
+          "annualizedReturnPct": 0.30407944414476695,
+          "maxDrawdownPct": -4.325257399259675,
+          "sharpe": 0.08435779500891266
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 1.3636725416347195,
+          "annualizedReturnPct": 1.426356705665821,
+          "maxDrawdownPct": -7.055247458293268,
+          "sharpe": 0.20561008105801623
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": -5.285692033311884,
+          "annualizedReturnPct": -5.52016555577326,
+          "maxDrawdownPct": -5.358877412459606,
+          "sharpe": -1.5087515091864008
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.77974404847839,
+          "annualizedReturnPct": 36.45234915403517,
+          "maxDrawdownPct": -10.611285121463732,
+          "sharpe": 1.5481923613542903
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.009285287117823,
+          "annualizedReturnPct": 18.177305897538766,
+          "maxDrawdownPct": -13.06385694641734,
+          "sharpe": 0.8886550610524534
+        }
+      ],
+      "largestClosedWinnerPnl": 3204.9284000000007,
+      "netPnlLessLargestWinner": 1720.3256000000056
+    },
+    {
+      "name": "channel_slope50",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 54.93409120000003,
+      "annualizedReturnPct": 7.866718831675112,
+      "maxDrawdownPct": -13.083091142645852,
+      "exposurePct": 9.26639089954881,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.06400000000002,
+          "maxDrawdownPct": -12.982581350224153
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.062182399999934,
+          "maxDrawdownPct": -13.278578017768616
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.031334471330183,
+          "annualizedReturnPct": 18.204365404591538,
+          "maxDrawdownPct": -13.083091142645852,
+          "sharpe": 0.8889526101857983
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2175.365600000003
+    },
+    {
+      "name": "channel_slope80",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 80,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 54.93409120000003,
+      "annualizedReturnPct": 7.866718831675112,
+      "maxDrawdownPct": -13.083091142645852,
+      "exposurePct": 9.26639089954881,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.06400000000002,
+          "maxDrawdownPct": -12.982581350224153
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.062182399999934,
+          "maxDrawdownPct": -13.278578017768616
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.031334471330183,
+          "annualizedReturnPct": 18.204365404591538,
+          "maxDrawdownPct": -13.083091142645852,
+          "sharpe": 0.8889526101857983
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2175.365600000003
+    },
+    {
+      "name": "channel_slope100",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 100,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 54.93409120000003,
+      "annualizedReturnPct": 7.866718831675112,
+      "maxDrawdownPct": -13.083091142645852,
+      "exposurePct": 9.26639089954881,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.06400000000002,
+          "maxDrawdownPct": -12.982581350224153
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.062182399999934,
+          "maxDrawdownPct": -13.278578017768616
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.031334471330183,
+          "annualizedReturnPct": 18.204365404591538,
+          "maxDrawdownPct": -13.083091142645852,
+          "sharpe": 0.8889526101857983
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2175.365600000003
+    },
+    {
+      "name": "channel_volume1",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 54.93409120000003,
+      "annualizedReturnPct": 7.866718831675112,
+      "maxDrawdownPct": -13.083091142645852,
+      "exposurePct": 9.26639089954881,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.06400000000002,
+          "maxDrawdownPct": -12.982581350224153
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.062182399999934,
+          "maxDrawdownPct": -13.278578017768616
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.031334471330183,
+          "annualizedReturnPct": 18.204365404591538,
+          "maxDrawdownPct": -13.083091142645852,
+          "sharpe": 0.8889526101857983
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2175.365600000003
+    },
+    {
+      "name": "channel_volume12",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.2,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 41.845077600000046,
+      "annualizedReturnPct": 6.232527057595316,
+      "maxDrawdownPct": -10.587464417395253,
+      "exposurePct": 7.352262620602207,
+      "tradeCount": 4,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 42.47700000000003,
+          "maxDrawdownPct": -10.572024940099467
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 41.21315519999995,
+          "maxDrawdownPct": -10.602949056540012
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 5.313352523911052,
+          "annualizedReturnPct": 6.3781070501350845,
+          "maxDrawdownPct": -6.770606542235614,
+          "sharpe": 0.5974516361612658
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 866.464240000003
+    },
+    {
+      "name": "channel_volume15",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.5,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 32.46832000000002,
+      "annualizedReturnPct": 4.983311702867854,
+      "maxDrawdownPct": -10.568654011017188,
+      "exposurePct": 6.665687428816592,
+      "tradeCount": 4,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 33.43899999999999,
+          "maxDrawdownPct": -10.64072079298688
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 31.809327999999937,
+          "maxDrawdownPct": -10.584475822143947
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 25.752032000000003,
+          "annualizedReturnPct": 26.948391352878854,
+          "maxDrawdownPct": -10.568654011017188,
+          "sharpe": 1.2795192152661432
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 5.3408981892237195,
+          "annualizedReturnPct": 6.4113386467164135,
+          "maxDrawdownPct": -6.756564325492487,
+          "sharpe": 0.5989707465336446
+        }
+      ],
+      "largestClosedWinnerPnl": 3058.98704,
+      "netPnlLessLargestWinner": 187.84496000000217
+    },
+    {
+      "name": "channel_trail15",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 1.5,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 56.01122000000007,
+      "annualizedReturnPct": 7.996050251022946,
+      "maxDrawdownPct": -7.561017642906842,
+      "exposurePct": 5.986525295292215,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 57.17299999999999,
+          "maxDrawdownPct": -7.447842139664706
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.45298559999989,
+          "maxDrawdownPct": -7.7747256631856665
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 23.356452000000072,
+          "annualizedReturnPct": 24.431085282558506,
+          "maxDrawdownPct": -7.561017642906842,
+          "sharpe": 1.3589343440934112
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 26.471876801385296,
+          "annualizedReturnPct": 32.37704906624745,
+          "maxDrawdownPct": -7.544435926501691,
+          "sharpe": 1.5968172602445578
+        }
+      ],
+      "largestClosedWinnerPnl": 2429.372159999999,
+      "netPnlLessLargestWinner": 3171.7498400000077
+    },
+    {
+      "name": "channel_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 50.61792800000005,
+      "annualizedReturnPct": 7.340896111755479,
+      "maxDrawdownPct": -7.5193581769091855,
+      "exposurePct": 6.199584180912183,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 52.150000000000006,
+          "maxDrawdownPct": -7.39613638300205
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 49.55251199999991,
+          "maxDrawdownPct": -7.688160549558887
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 19.301995200000043,
+          "annualizedReturnPct": 20.175231515323034,
+          "maxDrawdownPct": -7.5193581769091855,
+          "sharpe": 1.1448041757814984
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 26.249295116566508,
+          "annualizedReturnPct": 32.09885238656196,
+          "maxDrawdownPct": -7.510857829374384,
+          "sharpe": 1.5949709227269182
+        }
+      ],
+      "largestClosedWinnerPnl": 2328.1483199999984,
+      "netPnlLessLargestWinner": 2733.6444800000063
+    },
+    {
+      "name": "channel_trail25",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.5,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 40.848664800000044,
+      "annualizedReturnPct": 6.103081048123937,
+      "maxDrawdownPct": -12.8405593999533,
+      "exposurePct": 7.68052645579706,
+      "tradeCount": 6,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 42.11699999999998,
+          "maxDrawdownPct": -12.63903159757901
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 39.90335679999995,
+          "maxDrawdownPct": -12.998610210941731
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 16.02291760000003,
+          "annualizedReturnPct": 16.737632356470943,
+          "maxDrawdownPct": -12.8405593999533,
+          "sharpe": 0.8967131217472226
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 21.397278842434474,
+          "annualizedReturnPct": 26.058411147084293,
+          "maxDrawdownPct": -10.223446567452953,
+          "sharpe": 1.307445840896846
+        }
+      ],
+      "largestClosedWinnerPnl": 1823.2403200000008,
+      "netPnlLessLargestWinner": 2261.6261600000034
+    },
+    {
+      "name": "channel_trail3",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 3.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 34.29404640000002,
+      "annualizedReturnPct": 5.232153520306193,
+      "maxDrawdownPct": -14.767154985048169,
+      "exposurePct": 8.279805534305233,
+      "tradeCount": 6,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 35.181,
+          "maxDrawdownPct": -14.61903654759138
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 33.122447999999906,
+          "maxDrawdownPct": -14.843242827009961
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 14.703973600000019,
+          "annualizedReturnPct": 15.356051712531048,
+          "maxDrawdownPct": -14.767154985048169,
+          "sharpe": 0.8251603262852331
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 17.07880920352003,
+          "annualizedReturnPct": 20.72146744355594,
+          "maxDrawdownPct": -11.716403445507451,
+          "sharpe": 0.9895422654720831
+        }
+      ],
+      "largestClosedWinnerPnl": 1823.2403200000008,
+      "netPnlLessLargestWinner": 1606.1643200000017
+    },
+    {
+      "name": "channel_v6_trail6",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 54.93409120000003,
+      "annualizedReturnPct": 7.866718831675112,
+      "maxDrawdownPct": -13.083091142645852,
+      "exposurePct": 9.26639089954881,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.06400000000002,
+          "maxDrawdownPct": -12.982581350224153
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 54.062182399999934,
+          "maxDrawdownPct": -13.278578017768616
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.031334471330183,
+          "annualizedReturnPct": 18.204365404591538,
+          "maxDrawdownPct": -13.083091142645852,
+          "sharpe": 0.8889526101857983
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2175.365600000003
+    },
+    {
+      "name": "channel_entry12_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 12,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 55.03737920000007,
+      "annualizedReturnPct": 7.879152854019478,
+      "maxDrawdownPct": -12.177022538562099,
+      "exposurePct": 6.957224840784104,
+      "tradeCount": 8,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.71399999999998,
+          "maxDrawdownPct": -12.141547673108299
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 53.718758399999885,
+          "maxDrawdownPct": -12.384963126470483
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 20.62957280000002,
+          "annualizedReturnPct": 21.568105534149318,
+          "maxDrawdownPct": -7.491780351386401,
+          "sharpe": 1.2097754665617797
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 28.523525037303333,
+          "annualizedReturnPct": 34.94579238922733,
+          "maxDrawdownPct": -12.177022538562099,
+          "sharpe": 1.5915636324243538
+        }
+      ],
+      "largestClosedWinnerPnl": 3431.5163200000006,
+      "netPnlLessLargestWinner": 2072.221600000006
+    },
+    {
+      "name": "channel_entry14_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 14,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 61.36164080000006,
+      "annualizedReturnPct": 8.627742014118445,
+      "maxDrawdownPct": -7.491780351386401,
+      "exposurePct": 6.55349670039747,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 63.01400000000002,
+          "maxDrawdownPct": -7.461483441001837
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 59.79635519999993,
+          "maxDrawdownPct": -7.704813068376604
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 20.62957280000002,
+          "annualizedReturnPct": 21.568105534149318,
+          "maxDrawdownPct": -7.491780351386401,
+          "sharpe": 1.2097754665617797
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 33.76623746113443,
+          "annualizedReturnPct": 41.545887389749645,
+          "maxDrawdownPct": -7.445279321547849,
+          "sharpe": 1.8619776515303812
+        }
+      ],
+      "largestClosedWinnerPnl": 3243.7519200000006,
+      "netPnlLessLargestWinner": 2892.4121600000053
+    },
+    {
+      "name": "channel_entry15_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 15,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 61.36164080000006,
+      "annualizedReturnPct": 8.627742014118445,
+      "maxDrawdownPct": -7.491780351386401,
+      "exposurePct": 6.55349670039747,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 63.01400000000002,
+          "maxDrawdownPct": -7.461483441001837
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 59.79635519999993,
+          "maxDrawdownPct": -7.704813068376604
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 20.62957280000002,
+          "annualizedReturnPct": 21.568105534149318,
+          "maxDrawdownPct": -7.491780351386401,
+          "sharpe": 1.2097754665617797
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 33.76623746113443,
+          "annualizedReturnPct": 41.545887389749645,
+          "maxDrawdownPct": -7.445279321547849,
+          "sharpe": 1.8619776515303812
+        }
+      ],
+      "largestClosedWinnerPnl": 3243.7519200000006,
+      "netPnlLessLargestWinner": 2892.4121600000053
+    },
+    {
+      "name": "channel_entry16_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 16,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 52.34857440000005,
+      "annualizedReturnPct": 7.553212643509588,
+      "maxDrawdownPct": -7.491780351386401,
+      "exposurePct": 6.2616356765388455,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 53.903999999999996,
+          "maxDrawdownPct": -7.456224745045226
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 51.21514879999989,
+          "maxDrawdownPct": -7.704813068376604
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 20.62957280000002,
+          "annualizedReturnPct": 21.568105534149318,
+          "maxDrawdownPct": -7.491780351386401,
+          "sharpe": 1.2097754665617797
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 26.294548561975862,
+          "annualizedReturnPct": 32.15540529448124,
+          "maxDrawdownPct": -7.431877135092946,
+          "sharpe": 1.5979354848867529
+        }
+      ],
+      "largestClosedWinnerPnl": 2361.8896000000004,
+      "netPnlLessLargestWinner": 2872.967840000005
+    },
+    {
+      "name": "channel_entry18_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 18,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 52.34857440000005,
+      "annualizedReturnPct": 7.553212643509588,
+      "maxDrawdownPct": -7.491780351386401,
+      "exposurePct": 6.2616356765388455,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 53.903999999999996,
+          "maxDrawdownPct": -7.456224745045226
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 51.21514879999989,
+          "maxDrawdownPct": -7.704813068376604
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 20.62957280000002,
+          "annualizedReturnPct": 21.568105534149318,
+          "maxDrawdownPct": -7.491780351386401,
+          "sharpe": 1.2097754665617797
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 26.294548561975862,
+          "annualizedReturnPct": 32.15540529448124,
+          "maxDrawdownPct": -7.431877135092946,
+          "sharpe": 1.5979354848867529
+        }
+      ],
+      "largestClosedWinnerPnl": 2361.8896000000004,
+      "netPnlLessLargestWinner": 2872.967840000005
+    },
+    {
+      "name": "channel_entry20_trail2",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 2.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 50.61792800000005,
+      "annualizedReturnPct": 7.340896111755479,
+      "maxDrawdownPct": -7.5193581769091855,
+      "exposurePct": 6.199584180912183,
+      "tradeCount": 7,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 52.150000000000006,
+          "maxDrawdownPct": -7.39613638300205
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 49.55251199999991,
+          "maxDrawdownPct": -7.688160549558887
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 19.301995200000043,
+          "annualizedReturnPct": 20.175231515323034,
+          "maxDrawdownPct": -7.5193581769091855,
+          "sharpe": 1.1448041757814984
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 26.249295116566508,
+          "annualizedReturnPct": 32.09885238656196,
+          "maxDrawdownPct": -7.510857829374384,
+          "sharpe": 1.5949709227269182
+        }
+      ],
+      "largestClosedWinnerPnl": 2328.1483199999984,
+      "netPnlLessLargestWinner": 2733.6444800000063
+    },
+    {
+      "name": "channel_exit5",
+      "strategyType": "star50_channel",
+      "fastPeriod": 5,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 33.46193120000003,
+      "annualizedReturnPct": 5.11908760464681,
+      "maxDrawdownPct": -14.707188619309875,
+      "exposurePct": 7.424463533707055,
+      "tradeCount": 6,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 34.652000000000015,
+          "maxDrawdownPct": -14.629644728747104
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 32.62497279999994,
+          "maxDrawdownPct": -14.854887759704638
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 16.128185600000045,
+          "annualizedReturnPct": 16.84792759998148,
+          "maxDrawdownPct": -14.707188619309875,
+          "sharpe": 0.9200002680922341
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 14.926389756665582,
+          "annualizedReturnPct": 18.075582709798653,
+          "maxDrawdownPct": -13.0772534485192,
+          "sharpe": 0.8836443654819177
+        }
+      ],
+      "largestClosedWinnerPnl": 1843.9589600000018,
+      "netPnlLessLargestWinner": 1502.2341600000018
+    },
+    {
+      "name": "channel_exit7",
+      "strategyType": "star50_channel",
+      "fastPeriod": 7,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 32.13577440000002,
+      "annualizedReturnPct": 4.937681570421981,
+      "maxDrawdownPct": -14.767154985048169,
+      "exposurePct": 8.323496303444115,
+      "tradeCount": 6,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 32.973000000000006,
+          "maxDrawdownPct": -14.61903654759138
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 30.965903999999924,
+          "maxDrawdownPct": -14.843242827009961
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 14.703973600000019,
+          "annualizedReturnPct": 15.356051712531048,
+          "maxDrawdownPct": -14.767154985048169,
+          "sharpe": 0.8251603262852331
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.197207431356151,
+          "annualizedReturnPct": 18.407962629345388,
+          "maxDrawdownPct": -13.135230412231847,
+          "sharpe": 0.8950198173197024
+        }
+      ],
+      "largestClosedWinnerPnl": 1823.2403200000008,
+      "netPnlLessLargestWinner": 1390.337120000002
+    },
+    {
+      "name": "channel_exit15",
+      "strategyType": "star50_channel",
+      "fastPeriod": 15,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 51.312341600000046,
+      "annualizedReturnPct": 7.426328254530179,
+      "maxDrawdownPct": -13.07429187637339,
+      "exposurePct": 10.590744538886522,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 52.42700000000002,
+          "maxDrawdownPct": -12.97543875675119
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 50.45568319999995,
+          "maxDrawdownPct": -13.270405708310706
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 31.611061600000024,
+          "annualizedReturnPct": 33.11341641403298,
+          "maxDrawdownPct": -11.539650099948295,
+          "sharpe": 1.3595171011481413
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 14.969319265790372,
+          "annualizedReturnPct": 18.128260809609653,
+          "maxDrawdownPct": -13.07429187637339,
+          "sharpe": 0.8857646385603025
+        }
+      ],
+      "largestClosedWinnerPnl": 3010.289920000001,
+      "netPnlLessLargestWinner": 2120.9442400000044
+    },
+    {
+      "name": "channel_initial1",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.0,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 4.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 55.17423760000006,
+      "annualizedReturnPct": 7.8956176017441315,
+      "maxDrawdownPct": -16.43752408339738,
+      "exposurePct": 9.753153999312511,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 56.03800000000001,
+          "maxDrawdownPct": -16.496042555241008
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 53.96251839999992,
+          "maxDrawdownPct": -16.595320753764543
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.68859760000002,
+          "annualizedReturnPct": 36.356259806175004,
+          "maxDrawdownPct": -10.587464417395253,
+          "sharpe": 1.544986131020006
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 15.20963196961822,
+          "annualizedReturnPct": 18.42321515806402,
+          "maxDrawdownPct": -16.43752408339738,
+          "sharpe": 0.7930123718406802
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 2199.380240000006
+    },
+    {
+      "name": "channel_risk3",
+      "strategyType": "star50_channel",
+      "fastPeriod": 10,
+      "slowPeriod": 20,
+      "parameters": {
+        "trendFilterPeriod": 200,
+        "trendSlopeBars": 50,
+        "volumeMultiplier": 1.0,
+        "initialAtrMultiplier": 1.5,
+        "trailingAtrMultiplier": 6.0,
+        "riskBudgetPct": 3.0,
+        "maxPositionPct": 90.0,
+        "gapAtrMultiplier": 2.0
+      },
+      "totalReturnPct": 50.983317600000056,
+      "annualizedReturnPct": 7.385889683420799,
+      "maxDrawdownPct": -10.609716024457615,
+      "exposurePct": 8.281351721963418,
+      "tradeCount": 5,
+      "researchTarget": {
+        "annualReturnPct": 15,
+        "maxDrawdownPct": 20,
+        "achieved": false
+      },
+      "costSensitivity": [
+        {
+          "scenario": "零成本",
+          "totalReturnPct": 51.892,
+          "maxDrawdownPct": -10.596347246981264
+        },
+        {
+          "scenario": "双倍成本",
+          "totalReturnPct": 50.23763519999993,
+          "maxDrawdownPct": -10.62311857772057
+        }
+      ],
+      "calendarYears": [
+        {
+          "year": 2020,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2021,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2022,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2023,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2024,
+          "totalReturnPct": 0.0,
+          "annualizedReturnPct": 0.0,
+          "maxDrawdownPct": 0.0,
+          "sharpe": 0.0
+        },
+        {
+          "year": 2025,
+          "totalReturnPct": 34.37656400000002,
+          "annualizedReturnPct": 36.02732488545348,
+          "maxDrawdownPct": -10.609716024457615,
+          "sharpe": 1.5898187481700061
+        },
+        {
+          "year": 2026,
+          "totalReturnPct": 12.358370467040691,
+          "annualizedReturnPct": 14.93140477577677,
+          "maxDrawdownPct": -10.2286490400879,
+          "sharpe": 0.8973698396348819
+        }
+      ],
+      "largestClosedWinnerPnl": 3318.043520000001,
+      "netPnlLessLargestWinner": 1780.2882400000035
+    }
+  ]
+}

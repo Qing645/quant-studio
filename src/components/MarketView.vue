@@ -2,7 +2,8 @@
 import { computed } from "vue";
 import { Activity, Bot, ChartCandlestick, Database, LoaderCircle, RefreshCw, Sparkles, Wifi } from "@lucide/vue";
 import MarketChart from "./MarketChart.vue";
-import type { MarketSnapshot, Strategy, StrategyParameterDefinition, StrategyPresentation, Timeframe, TimeframeOption } from "../types";
+import AIReportView from "./AIReport.vue";
+import type { AIReport, MarketSnapshot, Strategy, StrategyParameterDefinition, StrategyPresentation, Timeframe, TimeframeOption } from "../types";
 
 const props = defineProps<{
   symbol: string;
@@ -22,7 +23,7 @@ const props = defineProps<{
   strategySaved: boolean;
   strategyChanged: boolean;
   strategySaving: boolean;
-  aiResult: string;
+  aiReport: AIReport | null;
   aiError: string;
   aiBusy: boolean;
   aiReady: boolean;
@@ -80,18 +81,18 @@ function updateStrategy(event: Event): void {
       <div class="chart-caption"><Database :size="13" /> {{ snapshot ? `${snapshot.metadata.sessionStatus} · ${snapshot.metadata.delayNotice}` : "等待数据" }}</div>
       <section class="live-ai">
         <div class="live-ai-heading">
-          <div><h3><Bot :size="14" /> AI 行情解读</h3><span>{{ snapshot ? `${activeStrategy.name || activeTemplate?.label || '当前策略'} · ${snapshot.metadata.sourceTime}` : '等待行情数据' }}</span></div>
+          <div><h3><Bot :size="14" /> AI 市场与策略研判</h3><span>{{ snapshot ? `${activeStrategy.name || activeTemplate?.label || '当前策略'} · ${snapshot.metadata.sourceTime}` : '等待行情数据' }}</span></div>
           <button class="subtle-button" :disabled="!snapshot || aiBusy || !aiReady" :title="!aiReady ? '请先在 AI 模型页配置 API Key' : ''" @click="emit('analyze-ai')">
             <LoaderCircle v-if="aiBusy" :size="13" class="spinning" />
             <Sparkles v-else :size="13" />
-            {{ aiBusy ? '分析中' : aiResult || aiError ? '重新分析' : '生成分析' }}
+            {{ aiBusy ? '分析中' : aiReport || aiError ? '重新分析' : '生成分析' }}
           </button>
         </div>
         <p v-if="!aiReady" class="live-ai-hint">请先在 AI 模型页配置并测试模型连接。</p>
-        <p v-else-if="aiBusy" class="live-ai-hint">正在结合所选策略、当前指标与近期 K 线生成分析。</p>
+        <p v-else-if="aiBusy" class="live-ai-hint">正在采集美股、A股盘面与近期事件，结合当前策略生成综合报告…</p>
         <p v-else-if="aiError" class="live-ai-error">{{ aiError }}</p>
-        <p v-else-if="aiResult" class="live-ai-result"><span v-if="aiStale" class="live-ai-stale">行情已更新，以下分析基于上一时点；点击“重新分析”获取最新判断。</span>{{ aiResult }}</p>
-        <p v-else class="live-ai-hint">分析会结合当前行情、策略信号和近期历史数据；切换标的、周期或策略后需重新生成。</p>
+        <AIReportView v-else-if="aiReport" :report="aiReport" :stale="aiStale" />
+        <p v-else class="live-ai-hint">结合美股与宏观、A股盘面与资金、近期事件，研判市场阶段、关键价位、板块与应对节奏，并给出当前策略结论。</p>
       </section>
     </div>
     <aside class="analysis-panel">
@@ -102,6 +103,13 @@ function updateStrategy(event: Event): void {
       </div>
       <div v-if="snapshot && !snapshot.strategy.supported" class="assessment"><div class="assessment-title"><Database :size="14" /> 实时策略未生效</div><p>当前策略基于{{ activeTemplate?.scopeLabel || '指定行情周期' }}，所选周期为{{ timeframeLabel }}；行情仍正常显示，策略信号不计算。{{ snapshot.strategy.message }}</p></div>
       <div v-else-if="snapshot?.strategy.message" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号说明</div><p>{{ snapshot.strategy.message }}</p></div>
+      <div v-if="snapshot?.strategy.riskReference" class="assessment">
+        <div class="assessment-title"><Activity :size="14" /> 科创50条件核验</div>
+        <p v-if="snapshot.strategy.strategyType === 'star50_pullback'">长期趋势 {{ snapshot.strategy.riskReference.trendPassed ? '通过' : '未通过' }} · RSI2 {{ snapshot.strategy.riskReference.rsi2?.toFixed(1) }} · 超卖 {{ snapshot.strategy.riskReference.oversoldPassed ? '通过' : '未通过' }} · 恢复均线 {{ snapshot.strategy.riskReference.recoveryMean?.toFixed(3) }}</p>
+        <p v-else-if="snapshot.strategy.strategyType === 'star50_channel'">SMA过滤 {{ snapshot.strategy.riskReference.trendPassed ? '通过' : '未通过' }} · 均线走升 {{ snapshot.strategy.riskReference.trendSlopePassed ? '通过' : '未通过' }} · 突破上轨 {{ snapshot.strategy.riskReference.priorBreakoutHigh?.toFixed(3) }} · 退出下轨 {{ snapshot.strategy.riskReference.priorExitLow?.toFixed(3) }} · 量能 {{ snapshot.strategy.riskReference.volumePassed ? '通过' : '未通过' }}（{{ snapshot.strategy.riskReference.volumeRatio?.toFixed(2) }}倍）</p>
+        <p v-else>趋势 {{ snapshot.strategy.riskReference.trendPassed ? '通过' : '未通过' }} · 突破 {{ snapshot.strategy.riskReference.breakoutPassed ? '通过' : '未通过' }} · 量能 {{ snapshot.strategy.riskReference.volumePassed ? '通过' : '未通过' }}</p>
+        <p>假设本根生成入场信号，初始风险参考 {{ snapshot.strategy.riskReference.initialStopReference.toFixed(4) }}；这是信号日计算参考，不是实际持仓风险线。实际份额需结合次日开盘、风险预算和现金计算。</p>
+      </div>
       <div v-if="snapshot" class="metric-grid"><div><span>SMA20</span><b>{{ snapshot.analysis.sma20.toFixed(3) }}</b></div><div><span>SMA60</span><b>{{ snapshot.analysis.sma60.toFixed(3) }}</b></div><div><span>RSI14</span><b :class="snapshot.analysis.rsi14 < 30 ? 'amber' : ''">{{ snapshot.analysis.rsi14.toFixed(1) }}</b></div><div><span>ATR20</span><b>{{ snapshot.analysis.atr20.toFixed(3) }}</b></div></div>
       <div v-if="snapshot?.strategy.regime" class="assessment"><div class="assessment-title"><Activity :size="14" /> 市场状态</div><p>{{ snapshot.strategy.regime === 'bull' ? '牛市趋势：允许按策略持有或分批加仓。' : snapshot.strategy.regime === 'rebound_watch' ? '反弹观察：价格出现修复，但尚未完成大周期趋势确认。' : snapshot.strategy.regime === 'bear' ? '熊市趋势：优先控制仓位，避免把单日反弹当作反转。' : '趋势状态暂不可用。' }}</p></div>
       <div v-if="snapshot" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号依据</div><p>{{ snapshot.analysis.assessment }}</p></div>

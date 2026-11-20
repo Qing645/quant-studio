@@ -1,6 +1,6 @@
 export type View = "market" | "strategy" | "backtest" | "ai";
 export type Timeframe = "intraday" | "five_day" | "daily" | "weekly" | "monthly";
-export type BuiltinStrategyType = "trend_filter" | "swing_breakout" | "intraday_scalp";
+export type BuiltinStrategyType = "trend_filter" | "swing_breakout" | "intraday_scalp" | "star50_breakout" | "star50_pullback" | "star50_channel";
 export type StrategyType = BuiltinStrategyType | "custom";
 
 export interface Bar {
@@ -71,6 +71,24 @@ export interface StrategySignal {
   action?: "hold" | "exit" | "observe";
   rebound?: boolean;
   regimeSmaPeriod?: number;
+  positionRiskAvailable?: boolean;
+  riskReference?: {
+    atr20: number;
+    initialStopReference: number;
+    priorBreakoutHigh?: number;
+    priorExitLow?: number;
+    trendMean?: number;
+    trendPassed?: boolean;
+    trendSlopePassed?: boolean;
+    volumeRatio?: number;
+    breakoutPassed?: boolean;
+    volumePassed?: boolean;
+    rsi2?: number;
+    oversoldPassed?: boolean;
+    recoveryMean?: number;
+    riskBudgetPct: number;
+    maxPositionPct: number;
+  } | null;
 }
 
 export interface SignalHistoryRecord {
@@ -179,6 +197,7 @@ export interface StrategyTemplate {
 }
 
 export interface BacktestResult {
+  researchTarget?: { annualReturnPct: number; maxDrawdownPct: number; achieved: boolean };
   metadata: {
     source: string;
     sourceTime: string;
@@ -269,6 +288,30 @@ export interface BacktestResult {
   parameters?: Record<string, number>;
   positionSizingTargetVolatilityPct?: number;
   rebalanceCount?: number;
+  benchmarks?: NonNullable<BacktestResult["benchmark"]>[];
+  riskManagement?: {
+    riskBudgetPct: number;
+    maxPositionPct: number;
+    cancelledEntries: { time: string; reason: string }[];
+    pendingExit: string | null;
+    riskLineCurve: { time: string; value: number | null; pendingExit: string | null }[];
+    totalTransactionCost: number;
+    averageTradePnl: number;
+    averageWinPnl: number;
+    averageLossPnl: number;
+    turnoverPct: number;
+  };
+  researchPeriods?: { label: string; start: string; end: string; totalReturnPct: number; maxDrawdownPct: number; transactionCost: number }[];
+}
+
+export interface AIReport {
+  analysis: string;
+  completionStatus: "complete" | "truncated";
+  generatedAt: string;
+  marketContextAsOf: string;
+  targetSourceTime: string;
+  sources: { id: string; label: string; url: string; asOf: string }[];
+  warnings: string[];
 }
 
 export interface AISettings {
