@@ -72,6 +72,7 @@ class Star50ChannelSignals:
         self.prior_volume = bars["volume"].shift(1).rolling(20).mean().to_numpy()
         self.regime = talib.SMA(self.close, timeperiod=params["trendFilterPeriod"])
         prior_regime = pd.Series(self.regime).shift(params["trendSlopeBars"]).to_numpy()
+        self.prior_regime = prior_regime
         self.ready = np.isfinite(np.column_stack((self.prior_high, self.prior_low, self.atr,
                                                   self.prior_volume, self.regime, prior_regime))).all(axis=1)
         self.ready &= (self.atr > 0) & (self.prior_volume > 0)
@@ -132,7 +133,8 @@ def analyze_star50(bars: pd.DataFrame, fast: int, slow: int, params: dict[str, A
                              trendPassed=bool(signals.trend[index]), trendSlopePassed=bool(signals.trend_rising[index]),
                              volumePassed=bool(signals.volume_confirmed[index]),
                              volumeRatio=float(signals.volume_ratio[index]),
-                             trendMean=float(signals.regime[index]))
+                             trendMean=float(signals.regime[index]),
+                             priorTrendMean=float(signals.prior_regime[index]))
         elif pullback:
             reference.update(trendPassed=bool(signals.trend[index]), rsi2=float(signals.rsi[index]),
                              oversoldPassed=bool(signals.oversold[index]), recoveryMean=float(signals.fast[index]))
@@ -167,6 +169,39 @@ def analyze_star50(bars: pd.DataFrame, fast: int, slow: int, params: dict[str, A
             "入场还需次日开盘跳空、现金和100份整数手检查。当前没有账户成本、持仓最高收盘价和可卖份额，"
             "只展示入场与均线退出条件，不判定实际持仓ATR风险退出、不推定实际仓位。"
         ) if ready else f"至少需{warmup}根有效已完成日K预热。",
+    }
+
+
+def channel_intraday_preview(bars: pd.DataFrame, fast: int, slow: int,
+                             params: dict[str, Any], source_time: str) -> dict[str, Any]:
+    """Explain today's channel gates using the same rules, with cumulative volume explicitly provisional."""
+    observation = analyze_star50(bars, fast, slow, params, "star50_channel")
+    reference = observation["riskReference"]
+    details = None
+    blockers = []
+    if reference is not None:
+        price = observation["price"]
+        # Positive gap means a further rise is needed; a zero gap still fails strict breakout.
+        details = {
+            **reference,
+            "breakoutGapPct": (reference["priorBreakoutHigh"] / price - 1) * 100,
+            "exitBufferPct": (price / reference["priorExitLow"] - 1) * 100,
+            "trendSlopePct": (reference["trendMean"] / reference["priorTrendMean"] - 1) * 100,
+            "volumeThreshold": params["volumeMultiplier"],
+        }
+        for key, label in (("trendPassed", "价格未站上趋势均线"),
+                           ("trendSlopePassed", "趋势均线尚未走升"),
+                           ("breakoutPassed", "价格尚未突破上轨"),
+                           ("volumePassed", "累计量尚未达到日量门槛")):
+            if not reference[key]:
+                blockers.append(label)
+    return {
+        "asOf": source_time, "price": observation["price"], "ready": reference is not None,
+        "entryCondition": observation["entryCondition"], "exitCondition": observation["exitCondition"],
+        "details": details, "blockers": blockers,
+        "message": ("当日未收盘日K的暂态观察；累计成交量与此前20个完整交易日均量比较，"
+                    "不是同一时刻量比，未达门槛不能判定全天缩量。价格通道下轨不是实际持仓ATR止损线；"
+                    "正式信号仍以已完成日K为准。") if reference is not None else observation["message"],
     }
 
 

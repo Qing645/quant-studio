@@ -66,6 +66,26 @@ export interface StrategySignal {
   basis?: string;
   entryCondition?: boolean;
   exitCondition?: boolean;
+  intradayPreview?: {
+    asOf: string;
+    price?: number;
+    ready: boolean;
+    entryCondition: boolean;
+    exitCondition: boolean;
+    blockers: string[];
+    details: (NonNullable<StrategySignal["riskReference"]> & {
+      priorBreakoutHigh: number;
+      priorExitLow: number;
+      trendMean: number;
+      priorTrendMean: number;
+      trendSlopePct: number;
+      volumeRatio: number;
+      volumeThreshold: number;
+      breakoutGapPct: number;
+      exitBufferPct: number;
+    }) | null;
+    message: string;
+  };
   barStatus?: "completed" | "in_progress";
   regime?: "bull" | "bear" | "rebound_watch" | "data_insufficient";
   action?: "hold" | "exit" | "observe";
@@ -78,6 +98,7 @@ export interface StrategySignal {
     priorBreakoutHigh?: number;
     priorExitLow?: number;
     trendMean?: number;
+    priorTrendMean?: number;
     trendPassed?: boolean;
     trendSlopePassed?: boolean;
     volumeRatio?: number;

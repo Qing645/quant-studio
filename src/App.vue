@@ -123,6 +123,24 @@ const activeTemplate = computed(() =>
     (item) => item.strategyType === activeStrategy.value.strategyType
   )
 );
+const symbolOptions = computed(() => {
+  const options = new Map<string, string>();
+  for (const template of strategyTemplates.value) {
+    for (const code of template.supportedSymbols) {
+      if (!options.has(code)) options.set(code, template.scopeLabel);
+    }
+  }
+  for (const strategy of strategies.value) {
+    if (strategy.strategyType === "custom" && !options.has(strategy.rules.symbol)) {
+      options.set(strategy.rules.symbol, strategy.name || "已保存自定义标的");
+    }
+  }
+  options.set("159977.SZ", "创业板 ETF");
+  options.set("588080.SH", "科创50 ETF");
+  options.set("588220.SH", "科创100 ETF");
+  if (symbol.value && !options.has(symbol.value)) options.set(symbol.value, "当前代码");
+  return [...options].map(([value, label]) => ({ value, label }));
+});
 const activePresentation = computed(() =>
   strategyPresentation(
     activeStrategy.value,
@@ -744,6 +762,7 @@ onUnmounted(() => {
         <MarketView
           v-if="activeView === 'market'"
           :symbol="symbol"
+          :symbol-options="symbolOptions"
           :timeframe="timeframe"
           :timeframe-options="timeframeOptions"
           :snapshot="snapshot"

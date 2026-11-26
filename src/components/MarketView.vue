@@ -7,6 +7,7 @@ import type { AIReport, MarketSnapshot, Strategy, StrategyParameterDefinition, S
 
 const props = defineProps<{
   symbol: string;
+  symbolOptions: { value: string; label: string }[];
   timeframe: Timeframe;
   timeframeOptions: TimeframeOption[];
   snapshot: MarketSnapshot | null;
@@ -40,6 +41,7 @@ const emit = defineEmits<{
   "navigate-backtest": [];
 }>();
 const isLineTimeframe = computed(() => props.timeframe === "intraday" || props.timeframe === "five_day");
+const channelPreview = computed(() => props.snapshot?.strategy.intradayPreview);
 
 /** Forward code edits to the shared symbol state in the application shell. */
 function updateSymbol(event: Event): void {
@@ -56,7 +58,7 @@ function updateStrategy(event: Event): void {
   <div class="page-heading">
     <div><div class="eyebrow">MARKET MONITOR <span class="eyebrow-line"></span> {{ freshness }}</div><h1>实时策略分析</h1><p>行情、趋势结构与策略条件在同一视图追踪。</p></div>
     <div class="heading-controls">
-      <label class="symbol-input"><span>标的代码</span><input :value="symbol" maxlength="11" placeholder="159977" aria-label="输入六位股票或 ETF 代码" @input="updateSymbol" @keydown.enter="emit('refresh')" /><span class="exchange">{{ exchange }}</span></label>
+      <label class="symbol-input"><span>标的代码</span><input :value="symbol" list="market-symbol-options" maxlength="11" placeholder="159977" aria-label="选择或输入六位股票或 ETF 代码" @input="updateSymbol" @keydown.enter="emit('refresh')" /><datalist id="market-symbol-options"><option v-for="option in symbolOptions" :key="option.value" :value="option.value" :label="option.label" /></datalist><span class="exchange">{{ exchange }}</span><select class="symbol-quick-select" aria-label="从常用 ETF 选择代码" :value="''" @change="emit('update:symbol', ($event.target as HTMLSelectElement).value)"><option value="">常用</option><option value="159977.SZ">159977.SZ · 创业板 ETF</option><option value="588080.SH">588080.SH · 科创50 ETF</option><option value="588220.SH">588220.SH · 科创100 ETF</option></select></label>
       <label class="strategy-select"><span>实时策略</span><select :value="activeStrategy.id || '__draft__'" :disabled="strategySaving" @change="updateStrategy"><option v-if="!activeStrategy.id" value="__draft__">{{ activeStrategy.name || '当前草稿' }}</option><option v-for="strategy in strategies" :key="strategy.id" :value="strategy.id">{{ strategy.name }}</option></select></label>
       <label v-if="activeStrategy.strategyType === 'intraday_scalp' && decisionPeriodField" class="strategy-select"><span>{{ decisionPeriodField.label }}</span><select v-model.number="activeStrategy.parameters[decisionPeriodField.key]" :disabled="strategySaving"><option v-for="option in decisionPeriodField.options" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
       <button v-if="strategyChanged" class="subtle-button save-live-strategy" :disabled="strategySaving" @click="emit('saveStrategy')">{{ strategySaving ? '保存中…' : strategySaved ? '保存策略修改' : '保存当前策略' }}</button>
@@ -100,6 +102,19 @@ function updateStrategy(event: Event): void {
       <div v-if="snapshot?.strategy.supported" class="condition-list">
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.entryCondition }"><Activity :size="15" /></span><span>{{ activeTemplate?.entryLabel ?? '入场条件' }} <small>{{ activeTemplate?.entryRule }}</small></span><b :class="snapshot.strategy.entryCondition ? 'up' : 'muted'">{{ snapshot.strategy.entryCondition ? '触发' : '未触发' }}</b></div>
         <div class="condition-row"><span class="condition-icon" :class="{ pass: snapshot.strategy.exitCondition }"><ChartCandlestick :size="15" /></span><span>{{ activeTemplate?.exitLabel ?? '退出条件' }} <small>{{ activeTemplate?.exitRule }}</small></span><b :class="snapshot.strategy.exitCondition ? 'down' : 'muted'">{{ snapshot.strategy.exitCondition ? '触发' : '未触发' }}</b></div>
+      </div>
+      <div v-if="channelPreview" class="assessment intraday-preview">
+        <div class="assessment-title"><Activity :size="14" /> 当日盘中观察 · 暂态 · {{ channelPreview.asOf.slice(0, 19).replace('T', ' ') }}</div>
+        <p>当前价 {{ channelPreview.price?.toFixed(3) ?? '—' }}</p>
+        <template v-if="channelPreview.ready && channelPreview.details">
+          <p>入场{{ channelPreview.entryCondition ? '暂时满足' : '尚未满足' }} · 通道退出{{ channelPreview.exitCondition ? '暂时满足' : '尚未满足' }}</p>
+          <p>突破上轨 {{ channelPreview.details.priorBreakoutHigh.toFixed(3) }} · {{ channelPreview.details.breakoutPassed ? '已突破，回落至上轨需下跌' : '到达上轨还需上涨' }} {{ Math.abs(channelPreview.details.breakoutGapPct).toFixed(2) }}%（入场须严格高于）</p>
+          <p>退出下轨 {{ channelPreview.details.priorExitLow.toFixed(3) }} · {{ channelPreview.details.exitBufferPct < 0 ? '已低于下轨' : '价格高于下轨' }} {{ Math.abs(channelPreview.details.exitBufferPct).toFixed(2) }}%（退出须严格跌破）</p>
+          <p>SMA{{ activeStrategy.strategyType === 'star50_channel' ? activeStrategy.parameters.trendFilterPeriod : '' }} {{ channelPreview.details.trendMean.toFixed(3) }} · 价格过滤{{ channelPreview.details.trendPassed ? '通过' : '未通过' }} · 均线走升{{ channelPreview.details.trendSlopePassed ? '通过' : '未通过' }}（较比较日 {{ channelPreview.details.trendSlopePct.toFixed(2) }}%）</p>
+          <p>当日累计量 / 前20日完整日均量：{{ channelPreview.details.volumeRatio.toFixed(2) }} 倍；日量门槛 {{ channelPreview.details.volumeThreshold }} 倍，{{ channelPreview.details.volumePassed ? '累计量已达到' : '累计量尚未达到' }}。</p>
+          <p>{{ channelPreview.blockers.length ? `待满足：${channelPreview.blockers.join('；')}` : '当前各项入场门槛均满足，仍需收盘确认。' }}</p>
+        </template>
+        <p>{{ channelPreview.message }}</p>
       </div>
       <div v-if="snapshot && !snapshot.strategy.supported" class="assessment"><div class="assessment-title"><Database :size="14" /> 实时策略未生效</div><p>当前策略基于{{ activeTemplate?.scopeLabel || '指定行情周期' }}，所选周期为{{ timeframeLabel }}；行情仍正常显示，策略信号不计算。{{ snapshot.strategy.message }}</p></div>
       <div v-else-if="snapshot?.strategy.message" class="assessment"><div class="assessment-title"><Sparkles :size="14" /> 信号说明</div><p>{{ snapshot.strategy.message }}</p></div>

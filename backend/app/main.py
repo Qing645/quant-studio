@@ -26,6 +26,7 @@ from .ai_context import CHINA_TZ, fetch_market_context, reference_levels
 from .custom_rules import CustomRules, completed_custom_bars, get_rule_options, normalize_custom_rules
 from .engine import analyze_strategy, run_backtest
 from .market import analyze, fetch_bars, fetch_daily_history, normalize_symbol
+from .star50 import channel_intraday_preview
 from .strategies import get_strategy_template, get_strategy_templates, normalize_strategy_parameters
 
 
@@ -188,6 +189,12 @@ def market(
                 "daily": "日K", "weekly": "周K", "monthly": "月K",
             }.get(timeframe, timeframe)
         strategy_bars = bars if strategyType == "intraday_scalp" or (settings.rules and settings.rules.timeframe == "intraday") else analysis_bars
+        channel_live_bar = (
+            bars if strategyType == "star50_channel" and timeframe == "daily"
+            and metadata.get("marketOpen") and not bars.empty
+            and pd.Timestamp(bars.iloc[-1]["datetime"]).date() == datetime.now(CHINA_TZ).date()
+            else None
+        )
         if strategyType == "intraday_scalp" and timeframe == "intraday" and settings.parameters["decisionMinutes"] > 1:
             strategy_bars = analysis_bars
             metadata["analysisBasis"] = f"{settings.parameters['decisionMinutes']}分钟决策K · 最近五日分钟数据预热"
@@ -213,6 +220,12 @@ def market(
             fee_rate=feeRate, slippage_bps=slippageBps,
         )
         strategy["barStatus"] = strategy_bar_status
+        if channel_live_bar is not None and strategy_bar_status == "in_progress" and strategy.get("supported"):
+            # Keep today's provisional read separate from the official completed-daily signal.
+            strategy["intradayPreview"] = channel_intraday_preview(
+                channel_live_bar, settings.fastPeriod, settings.slowPeriod,
+                settings.parameters, metadata["sourceTime"],
+            )
         if strategy_bar_status == "in_progress" and strategy.get("supported"):
             strategy["message"] = (
                 f"当前{timeframe}K线尚未收盘；正式信号基于 {(strategy['asOf'] or '未知时间')[:16]} 的已完成K线。"

@@ -63,6 +63,7 @@ def build_research_messages(target: dict[str, Any], market: dict[str, Any]) -> l
             "flows": "主力资金为供应商大单估算，非真实机构账户流动；北向数据是否可核验以available为准，不能从额度、成交额、占位零值推算净买入。",
             "priceReferences": "referenceLevels的prior5/20/60Bars高低点排除该序列最新一根，SMA包含该序列最新一根；以lastBar和样本说明为准，不能一概称已完成日K。currentTarget窗口以当前图表K线根数计，分钟/周/月不可改称天。支撑压力仅选输入高低点或均线，保留价格精度，说明周期、方向和依据；单点不扩写成无依据区间。结合距现价幅度与可用ATR评价噪声，不把参考位当目标价、确定支撑或新增止损线。",
             "technical": "indicatorsAndSignals.signal是通用趋势/动能/量能扫描，不是selectedStrategy的信号。changePct为本根收盘相对上一根收盘，分钟涨跌不可写成当日涨跌。macd为TA-Lib柱值，RSI超卖不证明反转，ATR单位同价格。sma20ChangeVsPrior20Pct比较最近20根与此前不重叠20根的收盘均值，不是昨日SMA20斜率。recentMoveSizeVsPrior15为最近5根绝对收益均值/此前15根绝对收益均值，不是15根波动率。realizedVolatilityPct20为最近20根收益标准差乘sqrt(20)再乘100，非年化；波动收敛和区间位置都不单独证明筑底或方向。",
+            "intradayPreview": "selectedStrategy.intradayPreview仅为当日未收盘日K的暂态观察，按其asOf和ready解释；不能替代正式信号、触发真实买卖或推定持仓。details.volumeRatio是当日累计量/前20个完整日均量，不是同刻量比，不能据未达门槛判断全天缩量，也不外推全天量。breakoutGapPct为从当前价到上轨所需涨幅，exitBufferPct为当前价相对下轨的距离；等于上轨不满足严格突破，等于下轨不满足严格跌破。下轨不是实际持仓ATR止损线。",
             "strategy": "时间契约一致时，selectedStrategy是当前所选规则输出的唯一权威，按supported、signal、action、entryCondition、exitCondition、asOf及已提供的selectedConfiguration/parameters/rules/message解释；字段缺失不自行推算。barStatus=in_progress表示当前显示K线未收盘，正式信号已按asOf的已完成K线计算：它不撤销此前确认的入场/离场，也不表示该信号还需等本根收盘。规则内部连续收盘等确认条件已体现在输出，不能再要求额外确认，更不能将均线门槛替换为历史低点。策略不适用或预热不足只能观察，action=observe不能解释成买卖。",
             "coverage": "warnings中的缺失/陈旧项在相关章节简述，并说明其限制的判断；不要把缺少某项扩大成所有数据缺失。新闻为近7天公开样本，非完整新闻库，标题与摘要不等于全文或独立证实。相同事件合并，不将评论、评级或转述升级为政策已落地。",
         },

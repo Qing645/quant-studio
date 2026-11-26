@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 from app.market import _exclude_incomplete_current_daily_bar, _exchange_prefix, _minute_rows, _quote, analyze, fetch_bars, fetch_daily_history, is_market_open, normalize_symbol
-from app.main import AIBar, AISettings, BacktestInput, StrategyInput, _build_quant_context, _format_upstream_error, app, backtest as backtest_endpoint, list_strategy_templates, market as market_endpoint
+from app.main import AIBar, AISettings, BacktestInput, StrategyInput, CHINA_TZ, _build_quant_context, _format_upstream_error, app, backtest as backtest_endpoint, list_strategy_templates, market as market_endpoint
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -119,6 +119,48 @@ class MarketAdapterTest(unittest.TestCase):
         self.assertEqual(result["strategy"]["barStatus"], "in_progress")
         self.assertEqual(result["strategy"]["asOf"], bars.iloc[-2]["datetime"].isoformat())
         self.assertIn("尚未收盘", result["strategy"]["message"])
+
+    def test_star50_channel_exposes_separate_provisional_current_day_observation(self) -> None:
+        """Keep the formal channel signal closed-bar-only while exposing today's provisional read."""
+        close = np.linspace(10, 12, 280)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="B"),
+            "open": close, "high": close + .02, "low": close - .02,
+            "close": close, "volume": np.full(len(close), 1000.),
+        })
+        today = datetime.now(CHINA_TZ).replace(hour=14, minute=0, second=0, microsecond=0).replace(tzinfo=None)
+        bars.loc[len(bars) - 1, "datetime"] = today
+        metadata = {"source": "fixture", "sourceTime": today.isoformat(sep=" "),
+                    "exchange": "SH", "marketOpen": True}
+        with patch("app.main.fetch_bars", return_value=(bars, metadata)), patch(
+            "app.main.completed_custom_bars", return_value=(bars.iloc[:-1].reset_index(drop=True), True)
+        ):
+            result = market_endpoint(symbol="588080", timeframe="daily", strategyType="star50_channel",
+                                     fastPeriod=10, slowPeriod=15)
+
+        strategy = result["strategy"]
+        self.assertEqual(strategy["barStatus"], "in_progress")
+        self.assertEqual(strategy["asOf"], bars.iloc[-2]["datetime"].isoformat())
+        self.assertEqual(strategy["intradayPreview"]["asOf"], metadata["sourceTime"])
+        self.assertAlmostEqual(strategy["intradayPreview"]["price"], bars.iloc[-1]["close"])
+        self.assertIn("暂态观察", strategy["intradayPreview"]["message"])
+        self.assertTrue(strategy["intradayPreview"]["ready"])
+        self.assertIn("breakoutGapPct", strategy["intradayPreview"]["details"])
+
+    def test_star50_channel_has_no_intraday_preview_after_market_close(self) -> None:
+        """Do not label a completed daily candle as a live intraday observation."""
+        close = np.linspace(10, 12, 280)
+        bars = pd.DataFrame({
+            "datetime": pd.date_range("2025-01-01", periods=len(close), freq="B"),
+            "open": close, "high": close + .02, "low": close - .02,
+            "close": close, "volume": np.full(len(close), 1000.),
+        })
+        metadata = {"source": "fixture", "sourceTime": bars.iloc[-1]["datetime"].isoformat(sep=" "),
+                    "exchange": "SH", "marketOpen": False}
+        with patch("app.main.fetch_bars", return_value=(bars, metadata)):
+            result = market_endpoint(symbol="588080", timeframe="daily", strategyType="star50_channel",
+                                     fastPeriod=10, slowPeriod=15)
+        self.assertNotIn("intradayPreview", result["strategy"])
 
     def test_market_returns_bars_when_strategy_does_not_support_selected_timeframe(self) -> None:
         """Keep market browsing available and mark unsupported strategy scopes explicitly."""

@@ -2,6 +2,7 @@
 
 import json
 import unittest
+from datetime import datetime
 from urllib.parse import urlencode
 from unittest.mock import patch
 
@@ -9,7 +10,8 @@ import numpy as np
 import pandas as pd
 
 from app.engine import analyze_strategy, run_backtest
-from app.star50 import Star50ChannelSignals
+from app.ai_context import CHINA_TZ
+from app.star50 import Star50ChannelSignals, channel_intraday_preview
 from app.strategies import normalize_strategy_parameters
 from tests.test_strategy_parameters import LocalStrategyAPITest
 
@@ -25,6 +27,44 @@ def channel_bars() -> pd.DataFrame:
 
 class ChannelTest(unittest.TestCase):
     """Protect the rule change: prior channels, next-open fills, trend holding and causal sizing."""
+
+    def test_preview_explains_price_and_partial_volume_without_a_confirmed_signal(self) -> None:
+        """Today's cumulative volume may be incomplete even after its price breaks out."""
+        bars = channel_bars().iloc[:271].copy()
+        bars.loc[270, "volume"] = 500
+        settings = normalize_strategy_parameters("star50_channel")
+        preview = channel_intraday_preview(bars, 10, 15, settings, "2026-11-24 10:00:00")
+        self.assertTrue(preview["ready"])
+        self.assertFalse(preview["entryCondition"])
+        self.assertTrue(preview["details"]["breakoutPassed"])
+        self.assertLess(preview["details"]["breakoutGapPct"], 0)
+        self.assertGreater(preview["details"]["exitBufferPct"], 0)
+        self.assertEqual(preview["details"]["volumeRatio"], .5)
+        self.assertEqual(preview["blockers"], ["累计量尚未达到日量门槛"])
+        self.assertIn("不能判定全天缩量", preview["message"])
+        json.dumps(preview, allow_nan=False)
+
+    def test_preview_threshold_equality_and_warmup_are_not_misreported(self) -> None:
+        """Touching a channel boundary is not a strict crossing, and missing warmup is not a failure."""
+        bars = channel_bars().iloc[:271].copy()
+        settings = normalize_strategy_parameters("star50_channel")
+        boundary = bars.high.iloc[255:270].max()
+        bars.loc[270, ["open", "high", "low", "close"]] = [boundary, boundary + .01, boundary - .01, boundary]
+        preview = channel_intraday_preview(bars, 10, 15, settings, "2026-11-24 10:00:00")
+        self.assertAlmostEqual(preview["details"]["breakoutGapPct"], 0)
+        self.assertFalse(preview["details"]["breakoutPassed"])
+        self.assertFalse(preview["entryCondition"])
+        boundary = bars.low.iloc[260:270].min()
+        bars.loc[270, ["open", "high", "low", "close"]] = [boundary, boundary + .01, boundary - .01, boundary]
+        preview = channel_intraday_preview(bars, 10, 15, settings, "2026-11-24 10:00:00")
+        self.assertAlmostEqual(preview["details"]["exitBufferPct"], 0)
+        self.assertFalse(preview["exitCondition"])
+        preview = channel_intraday_preview(bars.iloc[:30], 10, 15, settings, "2026-11-24 10:00:00")
+        self.assertFalse(preview["ready"])
+        self.assertIsNone(preview["details"])
+        self.assertEqual(preview["blockers"], [])
+        self.assertIn("预热", preview["message"])
+        json.dumps(preview, allow_nan=False)
 
     def test_prior_channels_drive_live_entry_and_next_open_exit(self) -> None:
         """Require baseline volume confirmation and keep trend exits independent of SMA5 recovery."""
@@ -103,6 +143,28 @@ class ChannelTest(unittest.TestCase):
 
 class ChannelHTTPTest(LocalStrategyAPITest):
     """Exercise the actual HTTP routes with isolated strategy storage and a declared OHLC fixture."""
+
+    def test_current_day_details_keep_official_signal_and_reject_invalid_parameters(self) -> None:
+        """Serve today's detailed observation without changing yesterday's official conditions."""
+        bars = channel_bars().iloc[:271].copy()
+        bars.loc[270, "datetime"] = pd.Timestamp(datetime.now(CHINA_TZ).date())
+        metadata = {"marketOpen": True, "sourceTime": f"{datetime.now(CHINA_TZ).date()} 10:30:00"}
+        query = urlencode({"symbol": "588080", "timeframe": "daily", "strategyType": "star50_channel",
+                           "fastPeriod": 10, "slowPeriod": 15})
+        official = analyze_strategy(bars.iloc[:-1], "star50_channel", 10, 15, "588080", "daily")
+        with patch("app.main.fetch_bars", return_value=(bars, metadata)), patch(
+            "app.main.completed_custom_bars", return_value=(bars.iloc[:-1], True)
+        ):
+            status, response = self.request("/api/market?" + query)
+        self.assertEqual(status, 200, response)
+        for key in ("entryCondition", "exitCondition", "signal", "asOf"):
+            self.assertEqual(response["strategy"][key], official[key])
+        preview = response["strategy"]["intradayPreview"]
+        self.assertTrue(preview["entryCondition"])
+        self.assertEqual(preview["blockers"], [])
+        self.assertEqual(preview["asOf"], metadata["sourceTime"])
+        self.assertLess(preview["details"]["breakoutGapPct"], 0)
+        self.assertEqual(self.request("/api/market?" + query + "&parameters=%7B%22volumeMultiplier%22%3A0%7D")[0], 422)
 
     def test_saved_model_runs_and_invalid_scope_or_old_parameters_are_rejected(self) -> None:
         """Saving a new identity must change live/backtest behavior while preserving the old record."""
